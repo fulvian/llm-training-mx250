@@ -1,0 +1,39 @@
+# Models (too large for git)
+models/
+
+# Output directories
+smollm*/
+logs*/
+*.output/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Cache
+.cache/
+*.cache
+
+# Logs
+*.log
+
+# Checkpoints
+checkpoint-*/

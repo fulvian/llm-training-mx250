@@ -6,6 +6,7 @@ Ottimizzata per qualita dell'apprendimento su GPU MX250 2GB
 
 import argparse
 import gc
+import json
 import logging
 import os
 import signal
@@ -46,6 +47,12 @@ MODEL_PATH = "./models/SmolLM-135M-Instruct"
 OUTPUT_DIR = "./smollm_italian_improved"
 LOG_DIR = "./logs_smollm_improved"
 
+# Dataset locale unificato
+LOCAL_DATASET_PATH = "./datasets/italian_unified/train.jsonl"
+
+# Se LOCAL_DATASET_PATH esiste, usa quello; altrimenti usa HF (retrocompatibilità)
+USE_LOCAL_DATASET = os.path.exists(LOCAL_DATASET_PATH)
+
 MAX_SAMPLES_TINYSTORIES = 30000
 MAX_SAMPLES_ALPACA = 15000
 MAX_SAMPLES_DOLLY = 10000
@@ -62,8 +69,8 @@ WEIGHT_DECAY = 0.01
 LORA_R = 32
 LORA_ALPHA = 64
 LORA_DROPOUT = 0.1
-# Target modules ottimizzati per SmolLM-135M - solo attention per stabilità
-TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj"]
+# Target modules per LoRA - include anche gate_proj per maggiore capacità
+TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj"]
 
 LOGGING_STEPS = 10
 EVAL_STEPS = 200
@@ -134,6 +141,32 @@ def load_and_format_datasets(
     max_dolly: int,
 ) -> List[Dict]:
     """Carica e formatta i dataset italiani."""
+
+    # 优先使用本地统一数据集
+    if USE_LOCAL_DATASET:
+        logger.info(f"Caricamento dataset locale unificato...")
+        try:
+            all_samples = []
+            with open(LOCAL_DATASET_PATH, "r", encoding="utf-8") as f:
+                for line in tqdm(f, desc="Caricamento dataset"):
+                    sample = json.loads(line)
+                    all_samples.append(sample)
+
+            # 应用最大样本限制
+            total_max = max_tinystories + max_alpaca + max_dolly
+            if len(all_samples) > total_max:
+                all_samples = all_samples[:total_max]
+
+            logger.info(f"   Caricati {len(all_samples)} campioni da locale")
+            logger.info(f"Totale campioni: {len(all_samples)}")
+            return all_samples
+        except Exception as e:
+            logger.error(f"   Errore caricamento dataset locale: {e}")
+            logger.info("   Ritorno ai dataset HuggingFace...")
+
+    # 回退到 HuggingFace（向后兼容）
+    logger.warning("使用 HuggingFace 数据集（已弃用）- 请运行 prepare_datasets.py")
+
     all_samples = []
 
     logger.info("Caricamento TinyStories-Italian...")

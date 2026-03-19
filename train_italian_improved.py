@@ -62,7 +62,8 @@ WEIGHT_DECAY = 0.01
 LORA_R = 32
 LORA_ALPHA = 64
 LORA_DROPOUT = 0.1
-TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj"]
+# Target modules ottimizzati per SmolLM-135M - solo attention per stabilità
+TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj"]
 
 LOGGING_STEPS = 10
 EVAL_STEPS = 200
@@ -78,10 +79,26 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Variabile globale per gestione segnali
+_shutdown_requested = False
+
+
+def _signal_handler(signum, frame):
+    """Gestisce i segnali di terminazione."""
+    global _shutdown_requested
+    logger.warning(f"Seinale {signum} ricevuto, shutdown in corso...")
+    _shutdown_requested = True
+
+
+# Registra handler per segnali di terminazione
+signal.signal(signal.SIGINT, _signal_handler)
+signal.signal(signal.SIGTERM, _signal_handler)
+
 
 @dataclass
 class TrainingConfig:
     """Configurazione training."""
+
     model_path: str
     output_dir: str
     log_dir: str
@@ -97,6 +114,8 @@ class TrainingConfig:
     lora_dropout: float
     target_modules: List[str]
     resume_from_checkpoint: Optional[str] = None
+    logging_steps: int = 10
+    save_steps: int = 200
 
 
 def format_prompt(sample: Dict) -> str:
@@ -116,50 +135,60 @@ def load_and_format_datasets(
 ) -> List[Dict]:
     """Carica e formatta i dataset italiani."""
     all_samples = []
-    
+
     logger.info("Caricamento TinyStories-Italian...")
     try:
         ds_tinystories = load_dataset("markod0925/TinyStories-Italian", split="train")
         tinystories_samples = [
             {"instruction": "Continua la storia:", "output": ds_tinystories[i]["text"]}
-            for i in tqdm(range(min(max_tinystories, len(ds_tinystories))), desc="TinyStories")
+            for i in tqdm(
+                range(min(max_tinystories, len(ds_tinystories))), desc="TinyStories"
+            )
         ]
         all_samples.extend(tinystories_samples)
         logger.info(f"   Caricati {len(tinystories_samples)} campioni TinyStories")
     except Exception as e:
         logger.error(f"   Errore caricamento TinyStories: {e}")
-    
+
     logger.info("Caricamento alpaca-gpt4-italian...")
     try:
-        ds_alpaca = load_dataset("FreedomIntelligence/alpaca-gpt4-italian", split="train")
+        ds_alpaca = load_dataset(
+            "FreedomIntelligence/alpaca-gpt4-italian", split="train"
+        )
         alpaca_samples = [
-            {"instruction": ds_alpaca[i]["instruction"], "output": ds_alpaca[i]["output"]}
+            {
+                "instruction": ds_alpaca[i]["instruction"],
+                "output": ds_alpaca[i]["output"],
+            }
             for i in tqdm(range(min(max_alpaca, len(ds_alpaca))), desc="Alpaca")
         ]
         all_samples.extend(alpaca_samples)
         logger.info(f"   Caricati {len(alpaca_samples)} campioni Alpaca")
     except Exception as e:
         logger.error(f"   Errore caricamento Alpaca: {e}")
-    
+
     logger.info("Caricamento Dolly italiano...")
     try:
         ds_dolly = load_dataset("gsarti/clean_dolly_italian", split="train")
         dolly_samples = [
-            {"instruction": ds_dolly[i]["instruction"], "output": ds_dolly[i]["response"]}
+            {
+                "instruction": ds_dolly[i]["instruction"],
+                "output": ds_dolly[i]["response"],
+            }
             for i in tqdm(range(min(max_dolly, len(ds_dolly))), desc="Dolly")
         ]
         all_samples.extend(dolly_samples)
         logger.info(f"   Caricati {len(dolly_samples)} campioni Dolly")
     except Exception as e:
         logger.error(f"   Errore caricamento Dolly: {e}")
-    
+
     logger.info(f"Totale campioni: {len(all_samples)}")
     return all_samples
 
 
 class ItalianDataset(torch.utils.data.Dataset):
     """Dataset PyTorch per dati italiani."""
-    
+
     def __init__(
         self,
         samples: List[Dict],
@@ -171,7 +200,7 @@ class ItalianDataset(torch.utils.data.Dataset):
         self.samples = samples
         self.tokenizer = tokenizer
         self.max_length = max_length
-        
+
         if pre_tokenize:
             logger.info(f"Pre-tokenizzazione di {len(samples)} campioni...")
             self.tokenized_samples = []
@@ -183,18 +212,20 @@ class ItalianDataset(torch.utils.data.Dataset):
                     max_length=max_length,
                     padding=False,
                 )
-                self.tokenized_samples.append({
-                    "input_ids": encoded["input_ids"],
-                    "attention_mask": encoded["attention_mask"],
-                })
+                self.tokenized_samples.append(
+                    {
+                        "input_ids": encoded["input_ids"],
+                        "attention_mask": encoded["attention_mask"],
+                    }
+                )
             logger.info("Pre-tokenizzazione completata")
         else:
             self.tokenized_samples = None
-    
+
     def __len__(self) -> int:
         """Restituisce il numero di campioni."""
         return len(self.samples)
-    
+
     def __getitem__(self, idx: int) -> Dict:
         """Restituisce un campione tokenizzato."""
         if self.tokenized_samples:
@@ -214,7 +245,7 @@ class ItalianDataset(torch.utils.data.Dataset):
             input_ids = torch.tensor(encoded["input_ids"], dtype=torch.long)
             attention_mask = torch.tensor(encoded["attention_mask"], dtype=torch.long)
             labels = input_ids.clone()
-        
+
         return {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
@@ -230,13 +261,13 @@ def setup_model_and_tokenizer(config: TrainingConfig):
         bnb_4bit_compute_dtype=torch.float16,
         bnb_4bit_use_double_quant=True,
     )
-    
+
     logger.info("Caricamento tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(config.model_path)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         logger.info("Impostato pad_token = eos_token")
-    
+
     logger.info("Caricamento modello con quantizzazione 4-bit...")
     model = AutoModelForCausalLM.from_pretrained(
         config.model_path,
@@ -244,16 +275,16 @@ def setup_model_and_tokenizer(config: TrainingConfig):
         torch_dtype=torch.float16,
         device_map="auto",
     )
-    
+
     model.config.use_cache = False
     logger.info(f"Parametri totali: {model.num_parameters():,}")
-    
+
     logger.info("Configurazione LoRA...")
     logger.info(f"   r = {config.lora_r}")
     logger.info(f"   alpha = {config.lora_alpha}")
     logger.info(f"   dropout = {config.lora_dropout}")
     logger.info(f"   target_modules = {config.target_modules}")
-    
+
     peft_config = LoraConfig(
         task_type=TaskType.CAUSAL_LM,
         r=config.lora_r,
@@ -262,9 +293,9 @@ def setup_model_and_tokenizer(config: TrainingConfig):
         target_modules=config.target_modules,
         inference_mode=False,
     )
-    
+
     model = get_peft_model(model, peft_config)
-    
+
     return model, tokenizer
 
 
@@ -345,7 +376,9 @@ def find_latest_checkpoint(output_dir: str) -> Optional[str]:
 
     checkpoints = []
     for item in os.listdir(output_dir):
-        if item.startswith("checkpoint-") and os.path.isdir(os.path.join(output_dir, item)):
+        if item.startswith("checkpoint-") and os.path.isdir(
+            os.path.join(output_dir, item)
+        ):
             try:
                 step = int(item.split("-")[1])
                 checkpoints.append((step, item))
@@ -357,8 +390,21 @@ def find_latest_checkpoint(output_dir: str) -> Optional[str]:
 
     checkpoints.sort(key=lambda x: x[0])
     latest = checkpoints[-1]
-    logger.info(f"Trovato ultimo checkpoint: step {latest[0]} -> {os.path.join(output_dir, latest[1])}")
+    logger.info(
+        f"Trovato ultimo checkpoint: step {latest[0]} -> {os.path.join(output_dir, latest[1])}"
+    )
     return latest[1]
+
+
+def cleanup_pid_file(output_dir: str) -> None:
+    """Rimuove il file PID alla terminazione del training."""
+    pid_file = os.path.join(output_dir, ".training_pid")
+    try:
+        if os.path.exists(pid_file):
+            os.remove(pid_file)
+            logger.info(f"Rimosso file PID: {pid_file}")
+    except OSError as e:
+        logger.warning(f"Impossibile rimuovere file PID: {e}")
 
 
 def check_and_manage_training_process(
@@ -382,14 +428,14 @@ def check_and_manage_training_process(
                     return pid
         except (ValueError, FileNotFoundError, ProcessLookupError):
             os.remove(pid_file)
-    
+
     return None
 
 
 def main() -> None:
     """Funzione principale."""
     setup_output_handling()
-    
+
     parser = argparse.ArgumentParser(
         description="Fine-tuning SmolLM-135M per italiano",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -408,14 +454,14 @@ Esempi di utilizzo:
     parser.add_argument("--kill", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--epochs", type=int, default=None)
-    
+
     args = parser.parse_args()
-    
+
     if args.kill:
         check_and_manage_training_process(OUTPUT_DIR, force_restart=True)
         print("Tutti i training terminati.")
         return
-    
+
     config = TrainingConfig(
         model_path=MODEL_PATH,
         output_dir=OUTPUT_DIR,
@@ -432,7 +478,7 @@ Esempi di utilizzo:
         lora_dropout=LORA_DROPOUT,
         target_modules=TARGET_MODULES,
     )
-    
+
     if args.epochs:
         config.num_epochs = args.epochs
         logger.info(f"Numero epoch modificato: {args.epochs}")
@@ -566,19 +612,34 @@ Esempi di utilizzo:
     except KeyboardInterrupt:
         logger.warning("Training interrotto dall'utente")
         logger.info("Salvataggio checkpoint di emergenza...")
-        model.save_pretrained(os.path.join(config.output_dir, "checkpoint-emergency"))
-        tokenizer.save_pretrained(os.path.join(config.output_dir, "checkpoint-emergency"))
-        logger.info("Checkpoint di emergenza salvato")
+        try:
+            model.save_pretrained(
+                os.path.join(config.output_dir, "checkpoint-emergency")
+            )
+            tokenizer.save_pretrained(
+                os.path.join(config.output_dir, "checkpoint-emergency")
+            )
+            logger.info("Checkpoint di emergenza salvato")
+        except Exception as save_error:
+            logger.error(f"Impossibile salvare checkpoint di emergenza: {save_error}")
+        finally:
+            cleanup_pid_file(config.output_dir)
         return
     except Exception as e:
         logger.error(f"Errore durante il training: {e}")
         logger.info("Salvataggio checkpoint di emergenza...")
         try:
-            model.save_pretrained(os.path.join(config.output_dir, "checkpoint-emergency"))
-            tokenizer.save_pretrained(os.path.join(config.output_dir, "checkpoint-emergency"))
+            model.save_pretrained(
+                os.path.join(config.output_dir, "checkpoint-emergency")
+            )
+            tokenizer.save_pretrained(
+                os.path.join(config.output_dir, "checkpoint-emergency")
+            )
             logger.info("Checkpoint di emergenza salvato")
         except Exception as save_error:
             logger.error(f"Impossibile salvare checkpoint di emergenza: {save_error}")
+        finally:
+            cleanup_pid_file(config.output_dir)
         raise
 
     logger.info("Salvataggio modello...")
@@ -587,6 +648,9 @@ Esempi di utilizzo:
     logger.info(f"Modello salvato in: {config.output_dir}")
 
     test_model(model, tokenizer)
+
+    # Cleanup file PID
+    cleanup_pid_file(config.output_dir)
 
     print("\n" + "=" * 60)
     print("TRAINING COMPLETATO")

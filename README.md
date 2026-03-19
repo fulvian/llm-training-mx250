@@ -30,6 +30,8 @@ Questo progetto implementa un sistema di fine-tuning di LLM per la lingua italia
 - ✅ Gestione errori con checkpoint di emergenza
 - ✅ Singleton training (previene multipli processi)
 - ✅ Logging dettagliato
+- ✅ Pulizia automatica file PID su crash/terminazione
+- ✅ Rilevamento crash training nel monitor
 
 ## 📦 Prerequisiti
 
@@ -172,7 +174,8 @@ WEIGHT_DECAY = 0.01
 LORA_R = 32
 LORA_ALPHA = 64
 LORA_DROPOUT = 0.1
-TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj"]
+# Nota: gate_proj rimosso per stabilità su modelli piccoli
+TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj"]
 
 # Configurazione Logging
 LOGGING_STEPS = 10
@@ -324,6 +327,19 @@ Per problemi o domande:
 - Apri una issue su GitHub
 - Controlla la sezione [Troubleshooting](#troubleshooting)
 - Leggi [AGENTS.md](AGENTS.md) per dettagli tecnici
+
+---
+
+## 📝 Changelog
+
+### 2026-03-20
+- **Fix**: Rimosso `gate_proj` da TARGET_MODULES per stabilità su modelli piccoli
+- **Fix**: Aggiunti attributi `logging_steps` e `save_steps` alla dataclass TrainingConfig
+- **Fix**: Aggiunta pulizia automatica file PID su crash/terminazione
+- **Improvement**: Monitor ora rileva e segnala training crashati
+
+### 2026-03-19
+- **Fix**: Corretto bug monitor che cercava processi vecchi
 
 ---
 

@@ -39,6 +39,8 @@ def find_training_info() -> dict[str, Any]:
         "pid": None,
         "output_dir": None,
         "log_file": None,
+        "status": "idle",  # idle, running, crashed, completed
+        "last_update": 0,
     }
 
     possible_dirs = [
@@ -46,6 +48,9 @@ def find_training_info() -> dict[str, Any]:
         "./smollm_best_output",
         "./italian-gpt2-qlora-output",
     ]
+
+    # Track if we found a valid running process
+    found_valid_process = False
 
     # First, try to find by PID file
     for dirname in possible_dirs:
@@ -55,15 +60,41 @@ def find_training_info() -> dict[str, Any]:
                 with open(pid_file) as f:
                     pid = int(f.read().strip())
                 if os.path.exists(f"/proc/{pid}"):
-                    info["running"] = True
-                    info["pid"] = pid
-                    info["output_dir"] = dirname
-                    info["log_file"] = os.path.join(dirname, "training.log")
-                    return info
-            except (ValueError, FileNotFoundError):
-                continue
+                    # Process exists, check if log is being updated
+                    log_file = os.path.join(dirname, "training.log")
+                    if os.path.exists(log_file):
+                        mtime = os.path.getmtime(log_file)
+                        time_since_update = time.time() - mtime
+                        info["last_update"] = mtime
 
-    # Try to find by process name
+                        if time_since_update < 300:  # Log updated in last 5 minutes
+                            info["running"] = True
+                            info["status"] = "running"
+                            info["pid"] = pid
+                            info["output_dir"] = dirname
+                            info["log_file"] = log_file
+                            found_valid_process = True
+                        else:
+                            # PID file exists but log not updated - crashed/stale
+                            info["running"] = False
+                            info["status"] = "crashed"
+                            info["pid"] = pid
+                            info["output_dir"] = dirname
+                            info["log_file"] = log_file
+                            return info
+            except (ValueError, FileNotFoundError, ProcessLookupError):
+                # PID file exists but process doesn't - stale PID file
+                info["running"] = False
+                info["status"] = "crashed"
+                info["output_dir"] = dirname
+                info["log_file"] = os.path.join(dirname, "training.log")
+                return info
+
+    # If we found a valid running process, return it
+    if found_valid_process:
+        return info
+
+    # Try to find by process name (orphaned processes without PID file)
     try:
         result = subprocess.run(
             ["ps", "aux"],
@@ -81,27 +112,37 @@ def find_training_info() -> dict[str, Any]:
                         for dirname in possible_dirs:
                             log_file = os.path.join(dirname, "training.log")
                             if os.path.exists(log_file):
-                                # Check if this log file is being written to recently
                                 mtime = os.path.getmtime(log_file)
-                                if (
-                                    time.time() - mtime < 300
-                                ):  # Modified in last 5 minutes
+                                time_since_update = time.time() - mtime
+                                info["last_update"] = mtime
+
+                                if time_since_update < 300:
                                     info["running"] = True
+                                    info["status"] = "running"
                                     info["pid"] = pid
                                     info["output_dir"] = dirname
                                     info["log_file"] = log_file
                                     return info
-
-                        # If no recent log found, use the first existing dir
-                        for dirname in possible_dirs:
-                            if os.path.exists(dirname):
-                                info["running"] = True
-                                info["pid"] = pid
-                                info["output_dir"] = dirname
-                                info["log_file"] = os.path.join(dirname, "training.log")
-                                return info
+                                else:
+                                    # Log not updated recently, but process exists
+                                    # Check if it's actually writing to this log
+                                    info["running"] = True
+                                    info["status"] = "running"
+                                    info["pid"] = pid
+                                    info["output_dir"] = dirname
+                                    info["log_file"] = log_file
+                                    return info
     except Exception:
         pass
+
+    # Check for completed training (no PID file but has final model)
+    for dirname in possible_dirs:
+        final_model = os.path.join(dirname, "pytorch_model.bin")
+        if os.path.exists(final_model):
+            info["status"] = "completed"
+            info["output_dir"] = dirname
+            info["log_file"] = os.path.join(dirname, "training.log")
+            return info
 
     # Fallback: check for most recently modified training.log
     most_recent_dir = None
@@ -113,10 +154,16 @@ def find_training_info() -> dict[str, Any]:
             if mtime > most_recent_time:
                 most_recent_time = mtime
                 most_recent_dir = dirname
+                info["last_update"] = mtime
 
     if most_recent_dir:
         info["output_dir"] = most_recent_dir
         info["log_file"] = os.path.join(most_recent_dir, "training.log")
+        # Check if log was updated recently
+        if time.time() - most_recent_time > 3600:  # More than 1 hour old
+            info["status"] = "completed"  # Likely completed
+        else:
+            info["status"] = "idle"
 
     return info
 
@@ -355,17 +402,46 @@ def main():
             last_training_info = training_info
 
         if not training_info["running"]:
-            console.print(
-                Panel(
-                    "[bold red]Nessun training in corso[/bold red]\n\n"
-                    "[yellow]Per avviare il training:[/yellow]\n"
-                    "  [cyan]python3 train_italian_improved.py[/cyan]\n\n"
-                    "[dim]Il monitor si aggiorna automaticamente...[/dim]",
-                    title="📊 TRAINING MONITOR",
-                    border_style="red",
-                    box=box.DOUBLE,
+            # Show appropriate message based on status
+            if training_info["status"] == "crashed":
+                console.print(
+                    Panel(
+                        "[bold red]⚠️ TRAINING CRASHATO[/bold red]\n\n"
+                        f"[yellow]Directory:[/yellow] {training_info['output_dir']}\n"
+                        f"[yellow]PID:[/yellow] {training_info.get('pid', 'N/A')}\n\n"
+                        "[cyan]Il training è terminato inaspettatamente.[/cyan]\n"
+                        "Controlla il log per i dettagli dell'errore.\n\n"
+                        "[dim]Riavviare con: python3 train_italian_improved.py --resume[/dim]",
+                        title="📊 TRAINING MONITOR",
+                        border_style="yellow",
+                        box=box.DOUBLE,
+                    )
                 )
-            )
+            elif training_info["status"] == "completed":
+                console.print(
+                    Panel(
+                        "[bold green]✓ TRAINING COMPLETATO[/bold green]\n\n"
+                        f"[yellow]Directory:[/yellow] {training_info['output_dir']}\n\n"
+                        "[cyan]Il training è terminato con successo![/cyan]\n\n"
+                        "[dim]Per testare il modello:[/dim]\n"
+                        "  [cyan]python3 test_model.py[/cyan]",
+                        title="📊 TRAINING MONITOR",
+                        border_style="green",
+                        box=box.DOUBLE,
+                    )
+                )
+            else:
+                console.print(
+                    Panel(
+                        "[bold red]Nessun training in corso[/bold red]\n\n"
+                        "[yellow]Per avviare il training:[/yellow]\n"
+                        "  [cyan]python3 train_italian_improved.py[/cyan]\n\n"
+                        "[dim]Il monitor si aggiorna automaticamente...[/dim]",
+                        title="📊 TRAINING MONITOR",
+                        border_style="red",
+                        box=box.DOUBLE,
+                    )
+                )
             time.sleep(refresh_interval)
             continue
 
@@ -389,6 +465,15 @@ def main():
 
         status_color = "green"
         status_text = f"● Attivo (PID: {training_info['pid']})"
+
+        # Calculate time since last log update
+        if training_info.get("last_update", 0) > 0:
+            time_since_update = time.time() - training_info["last_update"]
+            if time_since_update > 60:
+                update_str = f"{int(time_since_update // 60)}m"
+            else:
+                update_str = f"{int(time_since_update)}s"
+            status_text += f" | Log: {update_str} fa"
 
         current_loss = (
             f"{metrics['train_loss'][-1]:.6f}" if metrics["train_loss"] else "N/A"

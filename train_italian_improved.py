@@ -155,21 +155,30 @@ def load_and_format_datasets(
         ds_alpaca = load_dataset(
             "FreedomIntelligence/alpaca-gpt4-italian", split="train"
         )
-        alpaca_samples = [
-            {
-                "instruction": ds_alpaca[i]["instruction"],
-                "output": ds_alpaca[i]["output"],
-            }
-            for i in tqdm(range(min(max_alpaca, len(ds_alpaca))), desc="Alpaca")
-        ]
+        # Il dataset ha formato 'conversations' invece di 'instruction'/'output'
+        alpaca_samples = []
+        for i in tqdm(range(min(max_alpaca, len(ds_alpaca))), desc="Alpaca"):
+            conv = ds_alpaca[i].get("conversations", [])
+            if len(conv) >= 2:
+                # Estrai instruction dalla prima conversazione e response dalla seconda
+                instruction = conv[0].get("value", "") if conv else ""
+                response = conv[1].get("value", "") if len(conv) > 1 else ""
+                if instruction and response:
+                    alpaca_samples.append(
+                        {
+                            "instruction": instruction.strip(),
+                            "output": response.strip(),
+                        }
+                    )
         all_samples.extend(alpaca_samples)
         logger.info(f"   Caricati {len(alpaca_samples)} campioni Alpaca")
     except Exception as e:
         logger.error(f"   Errore caricamento Alpaca: {e}")
 
-    logger.info("Caricamento Dolly italiano...")
+    # Usa databricks-dolly-15k locale come fallback per Dolly
+    logger.info("Caricamento Dolly (databricks)...")
     try:
-        ds_dolly = load_dataset("gsarti/clean_dolly_italian", split="train")
+        ds_dolly = load_dataset("databricks/dolly_15k_micro", split="train")
         dolly_samples = [
             {
                 "instruction": ds_dolly[i]["instruction"],
@@ -180,7 +189,27 @@ def load_and_format_datasets(
         all_samples.extend(dolly_samples)
         logger.info(f"   Caricati {len(dolly_samples)} campioni Dolly")
     except Exception as e:
-        logger.error(f"   Errore caricamento Dolly: {e}")
+        # Prova con il dataset locale
+        logger.warning(f"   Dolly Hub non disponibile, provo dataset locale...")
+        try:
+            dolly_path = "./datasets/databricks-dolly-15k/databricks-dolly-15k.jsonl"
+            if os.path.exists(dolly_path):
+                import json
+
+                with open(dolly_path, "r") as f:
+                    dolly_data = [json.loads(line) for line in f][:max_dolly]
+                dolly_samples = [
+                    {"instruction": d["instruction"], "output": d["response"]}
+                    for d in tqdm(dolly_data, desc="Dolly (locale)")
+                ]
+                all_samples.extend(dolly_samples)
+                logger.info(
+                    f"   Caricati {len(dolly_samples)} campioni Dolly da locale"
+                )
+            else:
+                logger.error(f"   Dataset Dolly locale non trovato: {dolly_path}")
+        except Exception as local_error:
+            logger.error(f"   Errore caricamento Dolly locale: {local_error}")
 
     logger.info(f"Totale campioni: {len(all_samples)}")
     return all_samples

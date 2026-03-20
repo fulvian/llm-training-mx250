@@ -77,52 +77,48 @@ console = Console()
 # TENSORBOARD MANAGER
 # ============================================================================
 
+
 def get_tailscale_ip() -> str:
     """Ottiene l'IP Tailscale del computer con fallback."""
-    
+
     # Metodo 1: tailscale CLI (preferito)
     try:
         result = subprocess.run(
-            ["tailscale", "ip"],
-            capture_output=True,
-            text=True,
-            timeout=5
+            ["tailscale", "ip"], capture_output=True, text=True, timeout=5
         )
         if result.returncode == 0:
-            ips = result.stdout.strip().split('\n')
+            ips = result.stdout.strip().split("\n")
             # Preferisci IPv4
             for ip in ips:
-                if '.' in ip and ip.startswith('100.'):
+                if "." in ip and ip.startswith("100."):
                     return ip
             # Fallback al primo IP
             if ips:
                 return ips[0]
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
-    
+
     # Metodo 2: parsing interfaccia tailscale0
     try:
         result = subprocess.run(
             ["ip", "addr", "show", "tailscale0"],
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=5,
         )
         if result.returncode == 0:
             import re
-            match = re.search(r'inet\s+(\d+\.\d+\.\d+\.\d+)', result.stdout)
+
+            match = re.search(r"inet\s+(\d+\.\d+\.\d+\.\d+)", result.stdout)
             if match:
                 return match.group(1)
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
-    
+
     # Metodo 3: IP locale
     try:
         result = subprocess.run(
-            ["hostname", "-I"],
-            capture_output=True,
-            text=True,
-            timeout=5
+            ["hostname", "-I"], capture_output=True, text=True, timeout=5
         )
         if result.returncode == 0:
             ips = result.stdout.strip().split()
@@ -130,7 +126,7 @@ def get_tailscale_ip() -> str:
                 return ips[0]
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
-    
+
     # Fallback finale
     return "127.0.0.1"
 
@@ -139,21 +135,21 @@ def find_available_port(start_port: int = 6006) -> int:
     """Trova una porta disponibile a partire da start_port."""
     port = start_port
     max_attempts = 100
-    
+
     for _ in range(max_attempts):
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.bind(('127.0.0.1', port))
+                s.bind(("127.0.0.1", port))
                 return port
         except OSError:
             port += 1
-    
+
     return start_port  # Fallback
 
 
 class TensorBoardManager:
     """Gestisce il ciclo di vita di TensorBoard."""
-    
+
     def __init__(self, log_dir: str, port: int = TENSORBOARD_PORT):
         self.log_dir = log_dir
         self.port = port
@@ -162,33 +158,33 @@ class TensorBoardManager:
         self._is_healthy = False
         self._ip_address: Optional[str] = None
         self._training_stopped_time: Optional[float] = None
-    
+
     def get_ip_address(self) -> str:
         """Ottiene l'IP per l'URL (cached)."""
         if self._ip_address is None:
             self._ip_address = get_tailscale_ip()
         return self._ip_address
-    
+
     def get_url(self) -> str:
         """Ritorna l'URL completo di TensorBoard."""
         return f"http://{self.get_ip_address()}:{self.port}"
-    
+
     def get_local_url(self) -> str:
         """Ritorna l'URL locale di TensorBoard."""
         return f"http://127.0.0.1:{self.port}"
-    
+
     def is_running(self) -> bool:
         """Verifica se TensorBoard è in esecuzione."""
         if self.process is None:
             return False
-        
+
         # Verifica che il processo esista
         if self.process.poll() is not None:
             self.process = None
             return False
-        
+
         return True
-    
+
     def _health_check(self) -> bool:
         """Verifica che TensorBoard risponda alle richieste HTTP."""
         try:
@@ -197,28 +193,33 @@ class TensorBoardManager:
             return response.status == 200
         except (urllib.error.URLError, urllib.error.HTTPError, Exception):
             return False
-    
+
     def start(self) -> bool:
         """Avvia TensorBoard in background."""
         if self.is_running():
             return True
-        
+
         # Trova porta disponibile
         self.port = find_available_port(self.port)
-        
+
         # Verifica che la log_dir esista
         if not os.path.exists(self.log_dir):
             os.makedirs(self.log_dir, exist_ok=True)
-        
+
         cmd = [
-            sys.executable, "-m", "tensorboard.main",
-            "--logdir", self.log_dir,
-            "--port", str(self.port),
+            sys.executable,
+            "-m",
+            "tensorboard.main",
+            "--logdir",
+            self.log_dir,
+            "--port",
+            str(self.port),
             "--bind_all",
-            "--reload_interval", str(TENSORBOARD_RELOAD_INTERVAL),
+            "--reload_interval",
+            str(TENSORBOARD_RELOAD_INTERVAL),
             "--reload_multifile=true",
         ]
-        
+
         try:
             self.process = subprocess.Popen(
                 cmd,
@@ -226,24 +227,24 @@ class TensorBoardManager:
                 stderr=subprocess.PIPE,
                 start_new_session=True,
             )
-            
+
             # Attendi avvio
             time.sleep(2)
-            
+
             # Verifica che sia partito
             if not self.is_running():
                 return False
-            
+
             # Health check
             self._is_healthy = self._health_check()
             self._last_health_check = time.time()
-            
+
             return True
-            
+
         except Exception as e:
             self.process = None
             return False
-    
+
     def stop(self) -> None:
         """Ferma TensorBoard."""
         if self.process is not None:
@@ -261,7 +262,7 @@ class TensorBoardManager:
             finally:
                 self.process = None
                 self._is_healthy = False
-    
+
     def update(self, training_running: bool) -> None:
         """
         Aggiorna lo stato di TensorBoard.
@@ -269,7 +270,7 @@ class TensorBoardManager:
         """
         if training_running:
             self._training_stopped_time = None
-            
+
             if not self.is_running():
                 self.start()
             else:
@@ -278,7 +279,7 @@ class TensorBoardManager:
                 if now - self._last_health_check > HEALTH_CHECK_INTERVAL:
                     self._is_healthy = self._health_check()
                     self._last_health_check = now
-                    
+
                     # Se non healthy, riavvia
                     if not self._is_healthy:
                         self.stop()
@@ -289,9 +290,11 @@ class TensorBoardManager:
             if self.is_running():
                 if self._training_stopped_time is None:
                     self._training_stopped_time = time.time()
-                elif time.time() - self._training_stopped_time > TENSORBOARD_GRACE_PERIOD:
+                elif (
+                    time.time() - self._training_stopped_time > TENSORBOARD_GRACE_PERIOD
+                ):
                     self.stop()
-    
+
     def get_status(self) -> dict[str, Any]:
         """Ritorna lo stato completo di TensorBoard."""
         return {
@@ -303,7 +306,7 @@ class TensorBoardManager:
             "pid": self.process.pid if self.process else None,
             "ip": self.get_ip_address(),
         }
-    
+
     def __del__(self):
         """Cleanup automatico."""
         self.stop()
@@ -312,6 +315,7 @@ class TensorBoardManager:
 # ============================================================================
 # LOSS TRACKER
 # ============================================================================
+
 
 @dataclass
 class LossTracker:
@@ -364,6 +368,7 @@ loss_tracker = LossTracker()
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
+
 
 def format_decimal(value: Optional[float], precision: int = 6) -> str:
     """Format number in decimal notation with appropriate precision."""
@@ -504,6 +509,7 @@ def draw_loss_chart(
 # TRAINING DETECTION
 # ============================================================================
 
+
 def find_training_info() -> dict[str, Any]:
     info = {
         "running": False,
@@ -513,6 +519,7 @@ def find_training_info() -> dict[str, Any]:
         "status": "idle",
         "last_update": 0,
         "log_dir": None,
+        "training_start_time": None,
     }
 
     possible_dirs = [
@@ -533,8 +540,10 @@ def find_training_info() -> dict[str, Any]:
                     log_file = os.path.join(dirname, "training.log")
                     if os.path.exists(log_file):
                         mtime = os.path.getmtime(log_file)
+                        pid_mtime = os.path.getmtime(pid_file)
                         time_since_update = time.time() - mtime
                         info["last_update"] = mtime
+                        info["training_start_time"] = pid_mtime
 
                         if time_since_update < 300:
                             info["running"] = True
@@ -542,7 +551,7 @@ def find_training_info() -> dict[str, Any]:
                             info["pid"] = pid
                             info["output_dir"] = dirname
                             info["log_file"] = log_file
-                            info["log_dir"] = "./logs_smollm_improved"
+                            info["log_dir"] = "./smollm_italian_improved/runs"
                             found_valid_process = True
                         else:
                             info["running"] = False
@@ -550,14 +559,14 @@ def find_training_info() -> dict[str, Any]:
                             info["pid"] = pid
                             info["output_dir"] = dirname
                             info["log_file"] = log_file
-                            info["log_dir"] = "./logs_smollm_improved"
+                            info["log_dir"] = "./smollm_italian_improved/runs"
                             return info
             except (ValueError, FileNotFoundError, ProcessLookupError):
                 info["running"] = False
                 info["status"] = "crashed"
                 info["output_dir"] = dirname
                 info["log_file"] = os.path.join(dirname, "training.log")
-                info["log_dir"] = "./logs_smollm_improved"
+                info["log_dir"] = "./smollm_italian_improved/runs"
                 return info
 
     if found_valid_process:
@@ -589,7 +598,7 @@ def find_training_info() -> dict[str, Any]:
                                     info["pid"] = pid
                                     info["output_dir"] = dirname
                                     info["log_file"] = log_file
-                                    info["log_dir"] = "./logs_smollm_improved"
+                                    info["log_dir"] = "./smollm_italian_improved/runs"
                                     return info
                                 else:
                                     info["running"] = True
@@ -597,7 +606,7 @@ def find_training_info() -> dict[str, Any]:
                                     info["pid"] = pid
                                     info["output_dir"] = dirname
                                     info["log_file"] = log_file
-                                    info["log_dir"] = "./logs_smollm_improved"
+                                    info["log_dir"] = "./smollm_italian_improved/runs"
                                     return info
     except Exception:
         pass
@@ -608,7 +617,7 @@ def find_training_info() -> dict[str, Any]:
             info["status"] = "completed"
             info["output_dir"] = dirname
             info["log_file"] = os.path.join(dirname, "training.log")
-            info["log_dir"] = "./logs_smollm_improved"
+            info["log_dir"] = "./smollm_italian_improved/runs"
             return info
 
     most_recent_dir = None
@@ -625,7 +634,7 @@ def find_training_info() -> dict[str, Any]:
     if most_recent_dir:
         info["output_dir"] = most_recent_dir
         info["log_file"] = os.path.join(most_recent_dir, "training.log")
-        info["log_dir"] = "./logs_smollm_improved"
+        info["log_dir"] = "./smollm_italian_improved/runs"
         if time.time() - most_recent_time > 3600:
             info["status"] = "completed"
         else:
@@ -638,7 +647,10 @@ def find_training_info() -> dict[str, Any]:
 # METRICS PARSING
 # ============================================================================
 
-def parse_trainer_state(output_dir: str) -> dict[str, Any]:
+
+def parse_trainer_state(
+    output_dir: str, ignore_old_checkpoints: bool = False
+) -> dict[str, Any]:
     metrics = {
         "train_loss": [],
         "eval_loss": None,
@@ -650,6 +662,9 @@ def parse_trainer_state(output_dir: str) -> dict[str, Any]:
         "starting_step": 0,
         "checkpoint_path": None,
     }
+
+    if ignore_old_checkpoints:
+        return metrics
 
     try:
         checkpoint_dirs = []
@@ -785,6 +800,7 @@ def parse_log_metrics(log_content: str) -> dict[str, Any]:
 # SYSTEM METRICS
 # ============================================================================
 
+
 def get_gpu_metrics() -> dict[str, Any]:
     metrics = {
         "available": False,
@@ -865,6 +881,7 @@ def get_system_metrics() -> dict[str, Any]:
 # DISPLAY HELPERS
 # ============================================================================
 
+
 def build_progress_bar(pct: float, width: int = 40) -> str:
     filled = int(pct / 100 * width)
     empty = width - filled
@@ -907,31 +924,51 @@ def format_eta(seconds: int) -> str:
 
 def build_tensorboard_section(tb_status: dict[str, Any], training_running: bool) -> str:
     """Costruisce la sezione TensorBoard per il display."""
-    
+
     lines = []
-    lines.append(f"[{COLORS['header']}]├──────────────────────────────────────────────────────┤[/{COLORS['header']}]")
-    lines.append(f"│ [{COLORS['tensorboard']}]📊 TensorBoard[/{COLORS['tensorboard']}]                                          │")
-    
+    lines.append(
+        f"[{COLORS['header']}]├──────────────────────────────────────────────────────┤[/{COLORS['header']}]"
+    )
+    lines.append(
+        f"│ [{COLORS['tensorboard']}]📊 TensorBoard[/{COLORS['tensorboard']}]                                          │"
+    )
+
     if tb_status["running"]:
         status_icon = "✅" if tb_status["healthy"] else "⚠️"
         status_color = COLORS["success"] if tb_status["healthy"] else COLORS["warning"]
         status_text = "Running" if tb_status["healthy"] else "Starting..."
-        
-        lines.append(f"│ Status: [{status_color}]{status_icon} {status_text}[/{status_color}]  │ Port: [{COLORS['value']}]{tb_status['port']}[/{COLORS['value']}]              │")
-        lines.append(f"│ [{COLORS['info']}]URL:[/{COLORS['info']}] [{COLORS['value']}]{tb_status['url']}[/{COLORS['value']}]                    │")
-        
+
+        lines.append(
+            f"│ Status: [{status_color}]{status_icon} {status_text}[/{status_color}]  │ Port: [{COLORS['value']}]{tb_status['port']}[/{COLORS['value']}]              │"
+        )
+        lines.append(
+            f"│ [{COLORS['info']}]URL:[/{COLORS['info']}] [{COLORS['value']}]{tb_status['url']}[/{COLORS['value']}]                    │"
+        )
+
         if tb_status.get("pid"):
-            lines.append(f"│ PID: [{COLORS['value']}]{tb_status['pid']}[/{COLORS['value']}]                                          │")
+            lines.append(
+                f"│ PID: [{COLORS['value']}]{tb_status['pid']}[/{COLORS['value']}]                                          │"
+            )
     else:
-        lines.append(f"│ Status: [{COLORS['warning']}]⏸️ Not Running[/{COLORS['warning']}]                               │")
-        
+        lines.append(
+            f"│ Status: [{COLORS['warning']}]⏸️ Not Running[/{COLORS['warning']}]                               │"
+        )
+
         if training_running:
-            lines.append(f"│ [{COLORS['info']}]Avvio automatico in corso...[/{COLORS['info']}]                        │")
+            lines.append(
+                f"│ [{COLORS['info']}]Avvio automatico in corso...[/{COLORS['info']}]                        │"
+            )
         else:
-            lines.append(f"│ [{COLORS['info']}]Avvio manuale:[/{COLORS['info']}]                                       │")
-            lines.append(f"│   [dim]tensorboard --logdir=./logs_smollm_improved[/dim]          │")
-            lines.append(f"│   [dim]--port 6006 --bind_all[/dim]                               │")
-    
+            lines.append(
+                f"│ [{COLORS['info']}]Avvio manuale:[/{COLORS['info']}]                                       │"
+            )
+            lines.append(
+                f"│   [dim]tensorboard --logdir=./logs_smollm_improved[/dim]          │"
+            )
+            lines.append(
+                f"│   [dim]--port 6006 --bind_all[/dim]                               │"
+            )
+
     return "\n".join(lines)
 
 
@@ -954,7 +991,7 @@ def cleanup_handler(signum, frame):
 
 def main():
     global _tensorboard_manager
-    
+
     os.system("cls" if os.name == "nt" else "clear")
 
     # Registra handler per cleanup
@@ -964,16 +1001,16 @@ def main():
     last_training_info = None
     refresh_interval = 3
     start_time = time.time()
-    
+
     # Inizializza TensorBoard manager
-    tb_manager = TensorBoardManager("./logs_smollm_improved", TENSORBOARD_PORT)
+    tb_manager = TensorBoardManager("./smollm_italian_improved/runs", TENSORBOARD_PORT)
     _tensorboard_manager = tb_manager
 
     while True:
         os.system("cls" if os.name == "nt" else "clear")
 
         training_info = find_training_info()
-        
+
         # Aggiorna TensorBoard
         tb_manager.update(training_info["running"])
         tb_status = tb_manager.get_status()
@@ -987,7 +1024,7 @@ def main():
         if not training_info["running"]:
             # Costruisci sezione TensorBoard
             tb_section = build_tensorboard_section(tb_status, training_info["running"])
-            
+
             if training_info["status"] == "crashed":
                 console.print(
                     Panel(
@@ -1046,6 +1083,11 @@ def main():
 
         log_metrics = parse_log_metrics(log_content)
 
+        training_is_fresh = False
+        if training_info.get("training_start_time"):
+            time_since_start = time.time() - training_info["training_start_time"]
+            training_is_fresh = time_since_start < 300
+
         metrics = {
             "train_loss": [],
             "eval_loss": None,
@@ -1057,10 +1099,14 @@ def main():
             "starting_step": 0,
             "checkpoint_path": None,
             "data_source": "checkpoint",
+            "is_new_training": training_is_fresh,
         }
 
         if training_info.get("output_dir"):
-            trainer_metrics = parse_trainer_state(training_info["output_dir"])
+            trainer_metrics = parse_trainer_state(
+                training_info["output_dir"],
+                ignore_old_checkpoints=training_is_fresh,
+            )
             metrics["starting_step"] = trainer_metrics.get("starting_step", 0)
             metrics["checkpoint_path"] = trainer_metrics.get("checkpoint_path")
             if trainer_metrics.get("train_loss"):
@@ -1071,6 +1117,9 @@ def main():
                 metrics["epoch"] = trainer_metrics["epoch"]
                 metrics["total_steps"] = trainer_metrics["total_steps"]
                 metrics["current_step"] = trainer_metrics["current_step"]
+
+        if training_is_fresh:
+            metrics["data_source"] = "live (new training)"
 
         if log_metrics.get("current_step", 0) > 0:
             metrics["data_source"] = "live"
@@ -1148,11 +1197,17 @@ def main():
         if metrics["starting_step"] > 0 and metrics["data_source"] == "checkpoint":
             resume_indicator = f" [{COLORS['resume']}]🔄 RESUMED from step {metrics['starting_step']}[/{COLORS['resume']}]"
 
+        new_training_indicator = ""
+        if metrics.get("is_new_training"):
+            new_training_indicator = (
+                f" [{COLORS['success']}][NEW][/{COLORS['success']}]"
+            )
+
         # ====================================================================
         # BUILD OUTPUT
         # ====================================================================
         output = f"""[{COLORS["header"]}]╭────────────────── TRAINING MONITOR ──────────────────╮[/{COLORS["header"]}]
-│ [{COLORS["success"]}]✅ Running[/{COLORS["success"]}] (PID: {training_info["pid"]}){resume_indicator} │ Last update: [{COLORS["info"]}]{update_str}[/{COLORS["info"]}] ago   │
+│ [{COLORS["success"]}]✅ Running[/{COLORS["success"]}] (PID: {training_info["pid"]}){resume_indicator}{new_training_indicator} │ Last update: [{COLORS["info"]}]{update_str}[/{COLORS["info"]}] ago   │
 [{COLORS["header"]}]├──────────────────────────────────────────────────────┤[/{COLORS["header"]}]
 │ [{COLORS["metric"]}]Progress[/{COLORS["metric"]}]                                            │
 │ {progress_bar} [{get_progress_color(progress_pct)}]{progress_pct:.1f}%[/{get_progress_color(progress_pct)}]       │

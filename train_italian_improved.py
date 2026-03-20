@@ -9,6 +9,7 @@ import gc
 import json
 import logging
 import os
+import shutil
 import signal
 import sys
 import time
@@ -530,6 +531,27 @@ def cleanup_pid_file(output_dir: str) -> None:
         logger.warning(f"Impossibile rimuovere file PID: {e}")
 
 
+def cleanup_old_training_data(output_dir: str) -> None:
+    """Rimuove vecchi checkpoint e logs quando si inizia un nuovo training."""
+    if not os.path.exists(output_dir):
+        return
+
+    for item in os.listdir(output_dir):
+        if item.startswith("checkpoint-"):
+            checkpoint_path = os.path.join(output_dir, item)
+            if os.path.isdir(checkpoint_path):
+                shutil.rmtree(checkpoint_path)
+                logger.info(f"Rimosso vecchio checkpoint: {item}")
+
+    runs_dir = os.path.join(output_dir, "runs")
+    if os.path.exists(runs_dir):
+        for item in os.listdir(runs_dir):
+            run_path = os.path.join(runs_dir, item)
+            if os.path.isdir(run_path):
+                shutil.rmtree(run_path)
+                logger.info(f"Rimossa vecchia run TensorBoard: {item}")
+
+
 def check_and_manage_training_process(
     output_dir: str, force_restart: bool = False
 ) -> Optional[int]:
@@ -675,6 +697,10 @@ Esempi di utilizzo:
 
     os.makedirs(config.output_dir, exist_ok=True)
     os.makedirs(config.log_dir, exist_ok=True)
+
+    if args.no_resume:
+        logger.info("Pulizia vecchi dati di training...")
+        cleanup_old_training_data(config.output_dir)
 
     torch.cuda.empty_cache()
     gc.collect()

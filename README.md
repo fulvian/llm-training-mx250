@@ -30,6 +30,8 @@ Questo progetto implementa un sistema di fine-tuning di LLM per la lingua italia
 - ✅ **TensorBoard integrato con avvio automatico**
 - ✅ **URL TensorBoard con IP Tailscale per accesso remoto**
 - ✅ Indicatore visivo di stato nel monitor (live/checkpoint)
+- ✅ **Pulizia automatica vecchi dati con `--no_resume`**
+- ✅ **Indicatore `[NEW]` per training appena avviati**
 - ✅ Gestione errori con checkpoint di emergenza
 - ✅ Singleton training (previene multipli processi)
 - ✅ Logging dettagliato
@@ -466,6 +468,13 @@ Per problemi o domande:
 ---
 
 ## 📝 Changelog
+
+### 2026-03-20 - Clean Training Mode
+- **Feat**: Pulizia automatica vecchi checkpoint e runs TensorBoard con `--no_resume`
+- **Feat**: Indicatore `[NEW]` nel monitor per training appena avviati (primi 5 minuti)
+- **Feat**: Rilevamento training "fresh" - usa solo dati live, ignora vecchi checkpoint
+- **Fix**: Il monitor non mostra più metriche obsolete quando si avvia un nuovo training
+- **Fix**: TensorBoard mostra solo la run corrente, senza confusione con vecchi dati
 
 ### 2026-03-20 - TensorBoard Integration
 - **Feat**: TensorBoard integrato nel monitor con avvio/arresto automatico

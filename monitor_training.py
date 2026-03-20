@@ -168,6 +168,78 @@ def find_training_info() -> dict[str, Any]:
     return info
 
 
+def parse_trainer_state(output_dir: str) -> dict[str, Any]:
+    """Estrae le metriche dal file trainer_state.json del checkpoint."""
+    metrics = {
+        "train_loss": [],
+        "eval_loss": None,
+        "learning_rate": None,
+        "epoch": 0.0,
+        "grad_norm": None,
+        "total_steps": 5139,
+        "current_step": 0,
+    }
+
+    try:
+        # Find the latest checkpoint
+        checkpoint_dirs = []
+        if os.path.exists(output_dir):
+            for item in os.listdir(output_dir):
+                if item.startswith("checkpoint-"):
+                    checkpoint_path = os.path.join(output_dir, item)
+                    if os.path.isdir(checkpoint_path):
+                        try:
+                            step = int(item.split("-")[1])
+                            checkpoint_dirs.append((step, checkpoint_path))
+                        except (ValueError, IndexError):
+                            continue
+
+        if not checkpoint_dirs:
+            return metrics
+
+        # Use the latest checkpoint
+        checkpoint_dirs.sort(key=lambda x: x[0])
+        latest_checkpoint = checkpoint_dirs[-1][1]
+        trainer_state_file = os.path.join(latest_checkpoint, "trainer_state.json")
+
+        if not os.path.exists(trainer_state_file):
+            return metrics
+
+        with open(trainer_state_file, "r") as f:
+            trainer_state = json.load(f)
+
+        # Extract metrics from log_history
+        log_history = trainer_state.get("log_history", [])
+
+        # Get total steps
+        metrics["total_steps"] = trainer_state.get("max_steps", 5139)
+
+        # Get current step
+        metrics["current_step"] = trainer_state.get("global_step", 0)
+
+        # Get epoch
+        metrics["epoch"] = trainer_state.get("epoch", 0.0)
+
+        # Extract train losses and other metrics from log history
+        train_losses = []
+        for log_entry in log_history:
+            if "loss" in log_entry:
+                train_losses.append(log_entry["loss"])
+            if "eval_loss" in log_entry:
+                metrics["eval_loss"] = log_entry["eval_loss"]
+            if "learning_rate" in log_entry:
+                metrics["learning_rate"] = log_entry["learning_rate"]
+            if "grad_norm" in log_entry:
+                metrics["grad_norm"] = log_entry["grad_norm"]
+
+        metrics["train_loss"] = train_losses
+
+    except Exception as e:
+        pass
+
+    return metrics
+
+
 def parse_log_metrics(log_content: str) -> dict[str, Any]:
     """Estrae le metriche dal contenuto del log."""
     metrics = {
@@ -453,7 +525,17 @@ def main():
             except Exception:
                 pass
 
-        metrics = parse_log_metrics(log_content)
+        # Try to get metrics from trainer_state.json first (more reliable)
+        if training_info.get("output_dir"):
+            trainer_metrics = parse_trainer_state(training_info["output_dir"])
+            # If trainer_state has data, use it
+            if trainer_metrics.get("train_loss"):
+                metrics = trainer_metrics
+            else:
+                metrics = parse_log_metrics(log_content)
+        else:
+            metrics = parse_log_metrics(log_content)
+
         gpu = get_gpu_metrics()
         system = get_system_metrics()
 

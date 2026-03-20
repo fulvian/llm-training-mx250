@@ -520,6 +520,16 @@ Esempi di utilizzo:
         import subprocess
         import sys
 
+        # Controlla se c'è già un training in corso
+        existing_pid = check_and_manage_training_process(
+            OUTPUT_DIR, force_restart=False
+        )
+        if existing_pid is not None:
+            logger.warning(
+                f"Training già in corso (PID: {existing_pid}). Termino il processo esistente..."
+            )
+            check_and_manage_training_process(OUTPUT_DIR, force_restart=True)
+
         cmd = [sys.executable, __file__]
 
         if args.no_resume:

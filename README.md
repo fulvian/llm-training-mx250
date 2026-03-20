@@ -27,6 +27,8 @@ Questo progetto implementa un sistema di fine-tuning di LLM per la lingua italia
 - ✅ Resume automatico da checkpoint
 - ✅ Training in background (sopravvive a disconnessioni SSH)
 - ✅ Monitoraggio real-time con CLI
+- ✅ **TensorBoard integrato con avvio automatico**
+- ✅ **URL TensorBoard con IP Tailscale per accesso remoto**
 - ✅ Indicatore visivo di stato nel monitor (live/checkpoint)
 - ✅ Gestione errori con checkpoint di emergenza
 - ✅ Singleton training (previene multipli processi)
@@ -43,6 +45,7 @@ Questo progetto implementa un sistema di fine-tuning di LLM per la lingua italia
 - Python 3.8+
 - GPU NVIDIA con almeno 2GB VRAM
 - Git
+- **Tailscale** (opzionale, per accesso remoto a TensorBoard)
 
 ## 🔧 Installazione
 
@@ -57,6 +60,9 @@ source venv/bin/activate
 
 # Installa dipendenze
 pip install -r requirements.txt
+
+# Installa TensorBoard (richiesto per monitoring)
+pip install tensorboard
 ```
 
 ### Requirements
@@ -70,6 +76,7 @@ datasets>=2.14.0
 accelerate>=0.24.0
 rich>=13.0.0
 tqdm>=4.65.0
+tensorboard>=2.14.0
 ```
 
 ## 🚀 Avvio Rapido
@@ -84,6 +91,8 @@ python3 train_italian_improved.py
 # In un altro terminal, avvia monitoraggio
 python3 monitor_training.py
 ```
+
+Il monitor avvierà automaticamente TensorBoard e mostrerà l'URL per accedere ai grafici.
 
 ## 📜 Script Principali
 
@@ -129,12 +138,12 @@ python3 train_italian_improved.py --force
 
 ### 2. monitor_training.py
 
-Script per il monitoraggio in tempo reale del training.
+Script per il monitoraggio in tempo reale del training con **TensorBoard integrato**.
 
 #### Utilizzo
 
 ```bash
-# Avvia monitoraggio
+# Avvia monitoraggio (TensorBoard si avvia automaticamente)
 python3 monitor_training.py
 ```
 
@@ -144,6 +153,8 @@ python3 monitor_training.py
 - Visualizza metriche (loss, eval_loss, learning_rate)
 - Monitor risorse (GPU VRAM, utilization, temperature)
 - Trend chart ASCII per loss
+- **TensorBoard integrato con avvio/arresto automatico**
+- **URL con IP Tailscale per accesso remoto**
 - Supporto per training resumed da checkpoint
 - Indicazione dell'origine dei dati (src: live / src: checkpoint)
 - Messaggio di stato resume
@@ -241,23 +252,45 @@ Il monitor mostra:
 - Trend loss (ASCII chart)
 - Metriche (train_loss, eval_loss, learning_rate)
 - Risorse GPU (VRAM, utilization, temperatura)
+- **Stato TensorBoard con URL di accesso**
 - Origine dati: live (dati in tempo reale) o checkpoint (dati da ultimo checkpoint)
 - Indicatore visivo "🔄 RESUMED from step X" quando si riprende da checkpoint
 - Log recenti
 
 **Comportamento con resume**: Quando il training viene ripreso da checkpoint, il monitor mostra automaticamente i dati live più recenti. Il parametro `src` indica la fonte dei dati: `src: live` per dati in tempo reale dal log attivo, `src: checkpoint` per dati letti dall'ultimo checkpoint salvato.
 
-### TensorBoard
+### TensorBoard Integrato
 
-Il training è configurato per inviare le metriche a TensorBoard. Per visualizzare i grafici in tempo reale:
+Il monitor include **TensorBoard integrato** con le seguenti caratteristiche:
 
-```bash
-# Avvia TensorBoard in una nuova finestra/terminale
-tensorboard --logdir ./smollm_italian_improved/logs --port 6006
+#### Avvio Automatico
+- TensorBoard si avvia automaticamente quando il training è attivo
+- Si ferma dopo 60 secondi di inattività del training
+- Health check periodico per garantire il funzionamento
 
-# Apri nel browser
-http://localhost:6006
+#### URL di Accesso
+
+Il monitor mostra sempre l'URL di accesso:
+
 ```
+│ 📊 TensorBoard                                          │
+│ Status: ✅ Running  │ Port: 6006                        │
+│ URL: http://100.81.21.110:6006                          │
+│ PID: 12345                                              │
+```
+
+**Tipi di URL:**
+- **IP Tailscale** (preferito): `http://100.xx.xx.xx:6006` - Accesso remoto sicuro
+- **IP Locale**: `http://192.168.x.x:6006` - Accesso dalla rete locale
+- **Localhost**: `http://127.0.0.1:6006` - Accesso solo dal computer locale
+
+#### Accesso Remoto con Tailscale
+
+Per accedere a TensorBoard da un altro dispositivo:
+
+1. Installa [Tailscale](https://tailscale.com/) su entrambi i dispositivi
+2. Assicurati che siano nella stessa rete Tailscale
+3. Apri l'URL mostrato dal monitor nel browser
 
 #### Metriche Disponibili
 
@@ -267,10 +300,18 @@ http://localhost:6006
 - **grad_norm**: Normale del gradiente
 - **epoch**: Epoch corrente
 
+#### Avvio Manuale (se necessario)
+
+Se TensorBoard non si avvia automaticamente:
+
+```bash
+tensorboard --logdir ./logs_smollm_improved --port 6006 --bind_all
+```
+
 ### File di Log
 
 - **Training Log**: `./smollm_italian_improved/training.log`
-- **TensorBoard Logs**: `./smollm_italian_improved/logs/`
+- **TensorBoard Logs**: `./logs_smollm_improved/`
 - **Checkpoints**: `./smollm_italian_improved/checkpoint-*`
 
 ### Verifica Training in corso
@@ -295,6 +336,41 @@ python3 train_italian_improved.py --kill
 
 # Riavvia
 python3 train_italian_improved.py --force
+```
+
+### TensorBoard non si avvia
+
+**Sintomo**: Il monitor mostra "TensorBoard: Not Running"
+
+**Soluzione**:
+```bash
+# Verifica che tensorboard sia installato
+pip show tensorboard
+
+# Se non installato
+pip install tensorboard
+
+# Verifica che la porta 6006 non sia occupata
+lsof -i :6006
+
+# Avvia manualmente per test
+tensorboard --logdir ./logs_smollm_improved --port 6006
+```
+
+### URL Tailscale non accessibile
+
+**Sintomo**: L'URL con IP Tailscale non funziona
+
+**Soluzione**:
+```bash
+# Verifica che Tailscale sia attivo
+tailscale status
+
+# Verifica l'IP Tailscale
+tailscale ip
+
+# Usa l'URL localhost se sei sullo stesso computer
+# http://127.0.0.1:6006
 ```
 
 ### OOM (Out of Memory)
@@ -343,7 +419,7 @@ tail -f ./smollm_italian_improved/training.log
 ```
 training_llm/
 ├── train_italian_improved.py    # Script training principale
-├── monitor_training.py          # Script monitoraggio
+├── monitor_training.py          # Script monitoraggio (con TensorBoard integrato)
 ├── prepare_datasets.py         # Script preparazione dataset
 ├── models/                     # Modello base
 │   └── SmolLM-135M-Instruct/
@@ -391,7 +467,17 @@ Per problemi o domande:
 
 ## 📝 Changelog
 
-### 2026-03-20
+### 2026-03-20 - TensorBoard Integration
+- **Feat**: TensorBoard integrato nel monitor con avvio/arresto automatico
+- **Feat**: URL TensorBoard con IP Tailscale per accesso remoto
+- **Feat**: Health check periodico per TensorBoard
+- **Feat**: Grace period di 60 secondi prima di fermare TensorBoard
+- **Feat**: Gestione automatica porte (se 6006 occupata, prova 6007, ...)
+- **Feat**: Nuova classe `TensorBoardManager` per gestione lifecycle
+- **Feat**: Sezione TensorBoard sempre visibile nel monitor
+- **Fix**: Installato tensorboard come dipendenza richiesta
+
+### 2026-03-20 - TensorBoard Training
 - **Feat**: TensorBoard ora abilitato nel training (`report_to="tensorboard"`)
 - **Feat**: Aggiunta documentazione TensorBoard al README
 - **Fix**: Monitor ora mostra correttamente i dati live durante resume da checkpoint
@@ -400,13 +486,11 @@ Per problemi o domande:
 - **Feat**: Separatore con data/ora all'inizio di ogni sessione training
 - **Feat**: Messaggi più informativi su stato resume nel log
 
-### 2026-03-20
+### 2026-03-20 - Memory Optimization
 - **Fix**: MemoryCleanupCallback ora eredita da TrainerCallback
 - **Fix**: Implementati tutti i metodi callback richiesti da HuggingFace Trainer
 - **Fix**: Risolto errore AttributeError su on_init_end, on_epoch_begin
 - **Fix**: Aggiunto TrainerCallback agli import
-
-### 2026-03-20
 - **Memory**: Aggiunta deduplicazione automatica campioni dataset
 - **Memory**: Aggiunta garbage collection periodica (ogni 50 step)
 - **Memory**: Aggiunta pulizia memoria GPU dopo creazione dataset
@@ -414,14 +498,14 @@ Per problemi o domande:
 - **Memory**: Aggiunto MemoryCleanupCallback per gestione memoria dinamica
 - **Memory**: Ridotto eval_size a 200 campioni
 
-### 2026-03-20
+### 2026-03-20 - Dataset Preparation
 - **Feat**: Aggiunto script `prepare_datasets.py` per preparare dataset locali
 - **Feat**: Creato dataset unificato `datasets/italian_unified/train.jsonl` (55k campioni)
 - **Fix**: Aggiornato train_italian_improved.py per usare dataset locale
 - **Fix**: Ripristinato `gate_proj` nei target LoRA
 - **Fix**: Risolti problemi di caricamento dataset (struttura cambiata su HF)
 
-### 2026-03-20
+### 2026-03-20 - Bug Fixes
 - **Fix**: Aggiunti attributi `logging_steps` e `save_steps` alla dataclass TrainingConfig
 - **Fix**: Aggiunta pulizia automatica file PID su crash/terminazione
 - **Improvement**: Monitor ora rileva e segnala training crashati
@@ -436,3 +520,4 @@ Per problemi o domande:
 - Utilizza sempre il background mode per training lunghi
 - Monitora le risorse con `nvidia-smi` durante il training
 - I checkpoint vengono salvati automaticamente ogni 200 step
+- TensorBoard si avvia automaticamente con il monitor

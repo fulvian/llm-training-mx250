@@ -18,7 +18,7 @@ Progetto per il fine-tuning di LLM (Large Language Models) in italiano utilizzan
 Questo progetto implementa un sistema di fine-tuning di LLM per la lingua italiana utilizzando:
 
 - **Modello**: SmolLM-135M (Hugging Face)
-- **Dataset**: TinyStories-Italian, Alpaca-GPT4-Italian, Clean Dolly Italian
+- **Dataset**: TinyStories-Italian, Alpaca-GPT4-Italian, Dolly-15k (unificati in locale)
 - **Tecnica**: QLoRA (Quantized Low-Rank Adaptation) con 4-bit quantization
 - **Hardware**: Ottimizzato per GPU MX250 2GB VRAM
 
@@ -135,12 +135,33 @@ python3 monitor_training.py
 
 #### Funzionalità
 
-- Mostra progresso training (step, epoch)
+- mostra progresso training (step, epoch)
 - Visualizza metriche (loss, eval_loss, learning_rate)
 - Monitor risorse (GPU VRAM, utilization, temperature)
 - Trend chart ASCII per loss
 - Log recenti
 - Aggiornamento automatico ogni 3 secondi
+
+### 3. prepare_datasets.py
+
+Script per scaricare e preparare i dataset in locale.
+
+#### Utilizzo
+
+```bash
+# Prepara i dataset (scarica e unifica)
+python3 prepare_datasets.py
+
+# Output: datasets/italian_unified/train.jsonl (55.000 campioni)
+```
+
+#### Dataset generati
+
+- **TinyStories-Italian**: 30.000 storie per bambini
+- **Alpaca-GPT4-Italian**: 15.000 istruzioni
+- **Dolly-15k**: 10.000 esempi (inglese - inclusi per diversità)
+
+Il training usa automaticamente il dataset locale se presente.
 
 ## ⚙️ Configurazione
 
@@ -174,8 +195,11 @@ WEIGHT_DECAY = 0.01
 LORA_R = 32
 LORA_ALPHA = 64
 LORA_DROPOUT = 0.1
-# Nota: gate_proj rimosso per stabilità su modelli piccoli
-TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj"]
+# Target modules - include gate_proj per maggiore capacità
+TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj"]
+
+# Dataset locale unificato (creato da prepare_datasets.py)
+LOCAL_DATASET_PATH = "./datasets/italian_unified/train.jsonl"
 
 # Configurazione Logging
 LOGGING_STEPS = 10
@@ -288,9 +312,12 @@ tail -f ./smollm_italian_improved/training.log
 training_llm/
 ├── train_italian_improved.py    # Script training principale
 ├── monitor_training.py          # Script monitoraggio
+├── prepare_datasets.py         # Script preparazione dataset
 ├── models/                     # Modello base
 │   └── SmolLM-135M-Instruct/
 ├── datasets/                   # Dataset locali
+│   ├── italian_unified/       # Dataset unificato (55k campioni)
+│   └── databricks-dolly-15k/ # Dolly locale
 ├── smollm_italian_improved/   # Output training
 │   ├── training.log           # Log training
 │   ├── .training_pid          # PID file
@@ -333,7 +360,13 @@ Per problemi o domande:
 ## 📝 Changelog
 
 ### 2026-03-20
-- **Fix**: Rimosso `gate_proj` da TARGET_MODULES per stabilità su modelli piccoli
+- **Feat**: Aggiunto script `prepare_datasets.py` per preparare dataset locali
+- **Feat**: Creato dataset unificato `datasets/italian_unified/train.jsonl` (55k campioni)
+- **Fix**: Aggiornato train_italian_improved.py per usare dataset locale
+- **Fix**: Ripristinato `gate_proj` nei target LoRA
+- **Fix**: Risolti problemi di caricamento dataset (struttura cambiata su HF)
+
+### 2026-03-20
 - **Fix**: Aggiunti attributi `logging_steps` e `save_steps` alla dataclass TrainingConfig
 - **Fix**: Aggiunta pulizia automatica file PID su crash/terminazione
 - **Improvement**: Monitor ora rileva e segnala training crashati

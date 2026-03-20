@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Monitoraggio training in tempo reale.
-Trova automaticamente il training in corso e mostra metriche in tempo reale.
+Monitoraggio training in tempo reale con visualizzazione migliorata.
 
 Usage:
     python3 monitor_training.py
@@ -13,33 +12,241 @@ import re
 import subprocess
 import sys
 import time
+from collections import deque
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
-
-import os
 
 try:
     from rich.console import Console
     from rich.panel import Panel
     from rich.table import Table
+    from rich.text import Text
+    from rich.progress import Progress, BarColumn, TextColumn
     from rich import box
+    from rich import markup
+    from rich.style import Style
 except ImportError:
     print("Installare rich: pip install rich")
     sys.exit(1)
 
 
+COLORS = {
+    "success": "bold green",
+    "warning": "bold yellow",
+    "error": "bold red",
+    "info": "bold cyan",
+    "metric": "bold magenta",
+    "value": "bright_white",
+    "progress_low": "red",
+    "progress_mid": "yellow",
+    "progress_high": "green",
+    "header": "bold bright_cyan",
+    "chart_train": "green",
+    "chart_eval": "yellow",
+    "vram_low": "green",
+    "vram_mid": "yellow",
+    "vram_high": "red",
+    "temp_cool": "blue",
+    "temp_warm": "green",
+    "temp_hot": "yellow",
+    "temp_critical": "red",
+}
+
 console = Console()
 
 
+@dataclass
+class LossTracker:
+    loss_history: deque = field(default_factory=lambda: deque(maxlen=50))
+    prev_loss: Optional[float] = None
+
+    def add_loss(self, loss: float) -> None:
+        self.prev_loss = self.loss_history[-1] if self.loss_history else None
+        self.loss_history.append(loss)
+
+    def get_trend(self) -> tuple[str, str]:
+        if self.prev_loss is None or len(self.loss_history) < 2:
+            return "→", COLORS["warning"]
+
+        change = self.prev_loss - self.loss_history[-1]
+        change_pct = abs(change / self.prev_loss) * 100 if self.prev_loss != 0 else 0
+
+        if change_pct < 0.5:
+            return "→", COLORS["warning"]
+        elif change > 0:
+            return "↓", COLORS["success"]
+        else:
+            return "↑", COLORS["error"]
+
+    def get_change_rate(self) -> str:
+        if len(self.loss_history) < 5:
+            return "N/A"
+
+        recent = list(self.loss_history)[-5:]
+        if len(recent) < 2:
+            return "N/A"
+
+        total_change = (
+            (recent[0] - recent[-1]) / recent[0] * 100 if recent[0] != 0 else 0
+        )
+
+        if total_change > 5:
+            return f"[{COLORS['success']}]⚡ Fast ({total_change:.1f}%)[/{COLORS['success']}]"
+        elif total_change > 1:
+            return f"[{COLORS['warning']}]→ Steady ({total_change:.1f}%)[/{COLORS['warning']}]"
+        elif total_change > -1:
+            return f"[{COLORS['info']}]≈ Converging ({total_change:.1f}%)[/{COLORS['info']}]"
+        else:
+            return f"[{COLORS['error']}]↑ Increasing ({total_change:.1f}%)[/{COLORS['error']}]"
+
+
+loss_tracker = LossTracker()
+
+
+def format_decimal(value: Optional[float], precision: int = 6) -> str:
+    """Format number in decimal notation with appropriate precision."""
+    if value is None:
+        return "N/A"
+    if abs(value) >= 1000 or (abs(value) < 0.0001 and value != 0):
+        return f"{value:.8f}"
+    return f"{value:.{precision}f}"
+
+
+def get_progress_color(pct: float) -> str:
+    if pct < 30:
+        return COLORS["progress_low"]
+    elif pct < 70:
+        return COLORS["progress_mid"]
+    return COLORS["progress_high"]
+
+
+def get_temp_color(temp: float) -> str:
+    if temp < 60:
+        return COLORS["temp_cool"]
+    elif temp < 75:
+        return COLORS["temp_warm"]
+    elif temp < 85:
+        return COLORS["temp_hot"]
+    return COLORS["temp_critical"]
+
+
+def get_vram_color(vram_pct: float) -> str:
+    if vram_pct < 50:
+        return COLORS["vram_low"]
+    elif vram_pct < 80:
+        return COLORS["vram_mid"]
+    return COLORS["vram_high"]
+
+
+def get_util_color(util: float) -> str:
+    if util < 50:
+        return COLORS["success"]
+    elif util < 80:
+        return COLORS["warning"]
+    return COLORS["error"]
+
+
+def draw_loss_chart(
+    train_losses: list[float],
+    eval_loss: Optional[float] = None,
+    width: int = 40,
+    height: int = 6,
+) -> str:
+    if not train_losses or len(train_losses) < 2:
+        return "[dim]Raccogliendo dati...[/dim]"
+
+    all_losses = train_losses.copy()
+    if eval_loss is not None:
+        all_losses.append(eval_loss)
+
+    min_val = min(all_losses)
+    max_val = max(all_losses)
+    current_val = train_losses[-1]
+    val_range = max_val - min_val if max_val != min_val else max_val * 0.1
+
+    if val_range == 0:
+        val_range = max_val * 0.1 if max_val != 0 else 0.001
+
+    def get_y_pos(val: float) -> int:
+        normalized = (val - min_val) / val_range
+        return height - 1 - int(normalized * (height - 1))
+
+    grid = [[" " for _ in range(width)] for _ in range(height)]
+
+    step = max(1, len(train_losses) // width)
+    sampled_losses = train_losses[::step][:width]
+
+    prev_y = None
+    for i, loss in enumerate(sampled_losses):
+        y = get_y_pos(loss)
+        y = max(0, min(height - 1, y))
+        grid[y][i] = "●"
+
+        if prev_y is not None and prev_y != y:
+            direction = 1 if y > prev_y else -1
+            for fill_y in range(prev_y + direction, y, direction):
+                if 0 <= fill_y < height:
+                    grid[fill_y][i] = "│"
+        prev_y = y
+
+    if eval_loss is not None and len(sampled_losses) > 0:
+        eval_y = get_y_pos(eval_loss)
+        eval_y = max(0, min(height - 1, eval_y))
+        eval_x = min(len(sampled_losses) - 1, width - 2)
+        grid[eval_y][eval_x] = "◆"
+
+    lines = []
+
+    max_str = format_decimal(max_val, 4)
+    min_str = format_decimal(min_val, 4)
+    max_label_len = max(len(max_str), len(min_str)) + 1
+
+    for y in range(height):
+        if y == 0:
+            label = f"{max_str:>{max_label_len}}"
+        elif y == height - 1:
+            label = f"{min_str:>{max_label_len}}"
+        else:
+            label = " " * max_label_len
+
+        row = "".join(grid[y])
+        row_colored = ""
+        for c in row:
+            if c == "●":
+                row_colored += f"[{COLORS['chart_train']}]{c}[/{COLORS['chart_train']}]"
+            elif c == "◆":
+                row_colored += f"[{COLORS['chart_eval']}]{c}[/{COLORS['chart_eval']}]"
+            elif c == "│":
+                row_colored += f"[dim]{c}[/dim]"
+            else:
+                row_colored += c
+
+        lines.append(f"[dim]{label}[/dim] │ {row_colored}")
+
+    x_axis = "─" * (width + 1)
+    lines.append(f"{' ' * max_label_len} └{x_axis}")
+
+    legend = f"[{COLORS['chart_train']}]●● Train[/{COLORS['chart_train']}]  [{COLORS['chart_eval']}]◆◆ Eval[/{COLORS['chart_eval']}]"
+    lines.append(f"{' ' * (max_label_len + 2)}{legend}")
+
+    min_loss = format_decimal(min(train_losses), 6)
+    max_loss = format_decimal(max(train_losses), 6)
+    lines.append(
+        f"[dim]Cur: {format_decimal(current_val, 6)} | Min: {min_loss} | Max: {max_loss}[/dim]"
+    )
+
+    return "\n".join(lines)
+
+
 def find_training_info() -> dict[str, Any]:
-    """Trova automaticamente le informazioni sul training in corso."""
     info = {
         "running": False,
         "pid": None,
         "output_dir": None,
         "log_file": None,
-        "status": "idle",  # idle, running, crashed, completed
+        "status": "idle",
         "last_update": 0,
     }
 
@@ -49,10 +256,8 @@ def find_training_info() -> dict[str, Any]:
         "./italian-gpt2-qlora-output",
     ]
 
-    # Track if we found a valid running process
     found_valid_process = False
 
-    # First, try to find by PID file
     for dirname in possible_dirs:
         pid_file = os.path.join(dirname, ".training_pid")
         if os.path.exists(pid_file):
@@ -60,14 +265,13 @@ def find_training_info() -> dict[str, Any]:
                 with open(pid_file) as f:
                     pid = int(f.read().strip())
                 if os.path.exists(f"/proc/{pid}"):
-                    # Process exists, check if log is being updated
                     log_file = os.path.join(dirname, "training.log")
                     if os.path.exists(log_file):
                         mtime = os.path.getmtime(log_file)
                         time_since_update = time.time() - mtime
                         info["last_update"] = mtime
 
-                        if time_since_update < 300:  # Log updated in last 5 minutes
+                        if time_since_update < 300:
                             info["running"] = True
                             info["status"] = "running"
                             info["pid"] = pid
@@ -75,7 +279,6 @@ def find_training_info() -> dict[str, Any]:
                             info["log_file"] = log_file
                             found_valid_process = True
                         else:
-                            # PID file exists but log not updated - crashed/stale
                             info["running"] = False
                             info["status"] = "crashed"
                             info["pid"] = pid
@@ -83,18 +286,15 @@ def find_training_info() -> dict[str, Any]:
                             info["log_file"] = log_file
                             return info
             except (ValueError, FileNotFoundError, ProcessLookupError):
-                # PID file exists but process doesn't - stale PID file
                 info["running"] = False
                 info["status"] = "crashed"
                 info["output_dir"] = dirname
                 info["log_file"] = os.path.join(dirname, "training.log")
                 return info
 
-    # If we found a valid running process, return it
     if found_valid_process:
         return info
 
-    # Try to find by process name (orphaned processes without PID file)
     try:
         result = subprocess.run(
             ["ps", "aux"],
@@ -108,7 +308,6 @@ def find_training_info() -> dict[str, Any]:
                     if len(parts) > 1:
                         pid = int(parts[1])
 
-                        # Find the correct output dir by checking for training.log
                         for dirname in possible_dirs:
                             log_file = os.path.join(dirname, "training.log")
                             if os.path.exists(log_file):
@@ -124,8 +323,6 @@ def find_training_info() -> dict[str, Any]:
                                     info["log_file"] = log_file
                                     return info
                                 else:
-                                    # Log not updated recently, but process exists
-                                    # Check if it's actually writing to this log
                                     info["running"] = True
                                     info["status"] = "running"
                                     info["pid"] = pid
@@ -135,7 +332,6 @@ def find_training_info() -> dict[str, Any]:
     except Exception:
         pass
 
-    # Check for completed training (no PID file but has final model)
     for dirname in possible_dirs:
         final_model = os.path.join(dirname, "pytorch_model.bin")
         if os.path.exists(final_model):
@@ -144,7 +340,6 @@ def find_training_info() -> dict[str, Any]:
             info["log_file"] = os.path.join(dirname, "training.log")
             return info
 
-    # Fallback: check for most recently modified training.log
     most_recent_dir = None
     most_recent_time = 0
     for dirname in possible_dirs:
@@ -159,9 +354,8 @@ def find_training_info() -> dict[str, Any]:
     if most_recent_dir:
         info["output_dir"] = most_recent_dir
         info["log_file"] = os.path.join(most_recent_dir, "training.log")
-        # Check if log was updated recently
-        if time.time() - most_recent_time > 3600:  # More than 1 hour old
-            info["status"] = "completed"  # Likely completed
+        if time.time() - most_recent_time > 3600:
+            info["status"] = "completed"
         else:
             info["status"] = "idle"
 
@@ -169,7 +363,6 @@ def find_training_info() -> dict[str, Any]:
 
 
 def parse_trainer_state(output_dir: str) -> dict[str, Any]:
-    """Estrae le metriche dal file trainer_state.json del checkpoint."""
     metrics = {
         "train_loss": [],
         "eval_loss": None,
@@ -181,7 +374,6 @@ def parse_trainer_state(output_dir: str) -> dict[str, Any]:
     }
 
     try:
-        # Find the latest checkpoint
         checkpoint_dirs = []
         if os.path.exists(output_dir):
             for item in os.listdir(output_dir):
@@ -197,7 +389,6 @@ def parse_trainer_state(output_dir: str) -> dict[str, Any]:
         if not checkpoint_dirs:
             return metrics
 
-        # Use the latest checkpoint
         checkpoint_dirs.sort(key=lambda x: x[0])
         latest_checkpoint = checkpoint_dirs[-1][1]
         trainer_state_file = os.path.join(latest_checkpoint, "trainer_state.json")
@@ -208,40 +399,35 @@ def parse_trainer_state(output_dir: str) -> dict[str, Any]:
         with open(trainer_state_file, "r") as f:
             trainer_state = json.load(f)
 
-        # Extract metrics from log_history
         log_history = trainer_state.get("log_history", [])
 
-        # Get total steps
         metrics["total_steps"] = trainer_state.get("max_steps", 5139)
-
-        # Get current step
         metrics["current_step"] = trainer_state.get("global_step", 0)
-
-        # Get epoch
         metrics["epoch"] = trainer_state.get("epoch", 0.0)
 
-        # Extract train losses and other metrics from log history
         train_losses = []
+        last_train_entry = None
+
         for log_entry in log_history:
-            if "loss" in log_entry:
+            if "loss" in log_entry and "eval_loss" not in log_entry:
                 train_losses.append(log_entry["loss"])
+                last_train_entry = log_entry
             if "eval_loss" in log_entry:
                 metrics["eval_loss"] = log_entry["eval_loss"]
-            if "learning_rate" in log_entry:
-                metrics["learning_rate"] = log_entry["learning_rate"]
-            if "grad_norm" in log_entry:
-                metrics["grad_norm"] = log_entry["grad_norm"]
 
-        metrics["train_loss"] = train_losses
+        metrics["train_loss"] = train_losses[-50:] if train_losses else []
 
-    except Exception as e:
+        if last_train_entry:
+            metrics["learning_rate"] = last_train_entry.get("learning_rate")
+            metrics["grad_norm"] = last_train_entry.get("grad_norm")
+
+    except Exception:
         pass
 
     return metrics
 
 
 def parse_log_metrics(log_content: str) -> dict[str, Any]:
-    """Estrae le metriche dal contenuto del log."""
     metrics = {
         "train_loss": [],
         "eval_loss": None,
@@ -254,21 +440,16 @@ def parse_log_metrics(log_content: str) -> dict[str, Any]:
 
     lines = log_content.split("\n")
 
-    # Regex patterns - support multiple formats
-    # Format: 'loss': 1.234 or "loss": 1.234 or loss: 1.234
-    # Also: Metric: loss = 1.234
-    loss_pattern = r"(?:Metric:\s*)?['\"]?loss['\"]?:\s*([0-9.]+)"
-    eval_pattern = r"(?:Metric:\s*)?['\"]?eval_loss['\"]?:\s*([0-9.]+)"
-    lr_pattern = r"(?:Metric:\s*)?['\"]?learning_rate['\"]?:\s*([0-9.e-]+)"
-    epoch_pattern = r"(?:Metric:\s*)?['\"]?epoch['\"]?:\s*([0-9.e-]+)"
-    grad_pattern = r"(?:Metric:\s*)?['\"]?grad_norm['\"]?:\s*([0-9.]+)"
-    # Progress: | 10/5139 [06:53<58:55:48, 41.36s/it]
+    loss_pattern = r"['\"]loss['\"]\s*:\s*['\"]?([0-9.eE+-]+)['\"]?"
+    eval_pattern = r"['\"]eval_loss['\"]\s*:\s*['\"]?([0-9.eE+-]+)['\"]?"
+    lr_pattern = r"['\"]learning_rate['\"]\s*:\s*['\"]?([0-9.eE+-]+)['\"]?"
+    epoch_pattern = r"['\"]epoch['\"]\s*:\s*['\"]?([0-9.eE+-]+)['\"]?"
+    grad_pattern = r"['\"]grad_norm['\"]\s*:\s*['\"]?([0-9.eE+-]+)['\"]?"
     progress_pattern = r"\|\s*(\d+)/(\d+)\s+\["
 
     train_losses = []
 
     for line in lines:
-        # Progress bar - this is the main way to get current step
         prog_match = re.search(progress_pattern, line)
         if prog_match:
             try:
@@ -277,20 +458,17 @@ def parse_log_metrics(log_content: str) -> dict[str, Any]:
             except ValueError:
                 pass
 
-        # Try to find loss values in log lines (not progress bar)
-        # Format: {"loss": 1.234, "learning_rate": 1e-5, ...}
         if "loss" in line and "eval_loss" not in line:
             loss_match = re.search(loss_pattern, line)
             if loss_match:
                 try:
                     loss_val = float(loss_match.group(1))
-                    if loss_val < 100:  # Sanity check - loss shouldn't be > 100
+                    if loss_val < 100:
                         train_losses.append(loss_val)
                         metrics["train_loss"] = train_losses[-50:]
                 except ValueError:
                     pass
 
-        # Eval loss
         eval_match = re.search(eval_pattern, line)
         if eval_match:
             try:
@@ -298,7 +476,6 @@ def parse_log_metrics(log_content: str) -> dict[str, Any]:
             except ValueError:
                 pass
 
-        # Learning rate
         lr_match = re.search(lr_pattern, line)
         if lr_match:
             try:
@@ -306,7 +483,6 @@ def parse_log_metrics(log_content: str) -> dict[str, Any]:
             except ValueError:
                 pass
 
-        # Epoch
         epoch_match = re.search(epoch_pattern, line)
         if epoch_match:
             try:
@@ -314,7 +490,6 @@ def parse_log_metrics(log_content: str) -> dict[str, Any]:
             except ValueError:
                 pass
 
-        # Gradient norm
         grad_match = re.search(grad_pattern, line)
         if grad_match:
             try:
@@ -326,7 +501,6 @@ def parse_log_metrics(log_content: str) -> dict[str, Any]:
 
 
 def get_gpu_metrics() -> dict[str, Any]:
-    """Ottiene metriche GPU."""
     metrics = {
         "available": False,
         "name": "N/A",
@@ -362,11 +536,10 @@ def get_gpu_metrics() -> dict[str, Any]:
 
 
 def get_system_metrics() -> dict[str, Any]:
-    """Ottiene metriche di sistema."""
-    metrics = {
-        "cpu_percent": 0,
-        "ram_used": 0,
-        "ram_total": 0,
+    metrics: dict[str, Any] = {
+        "cpu_percent": 0.0,
+        "ram_used": 0.0,
+        "ram_total": 0.0,
     }
 
     try:
@@ -403,69 +576,54 @@ def get_system_metrics() -> dict[str, Any]:
     return metrics
 
 
-def draw_loss_chart(
-    train_losses: list[float],
-    eval_loss: Optional[float],
-    width: int = 35,
-    height: int = 6,
-) -> str:
-    """Disegna un grafico ASCII del trend della loss."""
-    if not train_losses:
-        return "Nessun dato disponibile"
+def build_progress_bar(pct: float, width: int = 40) -> str:
+    filled = int(pct / 100 * width)
+    empty = width - filled
 
-    all_losses = train_losses.copy()
-    if eval_loss is not None:
-        all_losses.append(eval_loss)
+    progress_color = get_progress_color(pct)
 
-    if not all_losses or max(all_losses) == 0:
-        return "Dati insufficienti"
+    if pct < 30:
+        gradient = COLORS["progress_low"]
+    elif pct < 70:
+        mid_point = (pct - 30) / 40
+        gradient = COLORS["progress_mid"]
+    else:
+        gradient = COLORS["progress_high"]
 
-    min_val = min(all_losses)
-    max_val = max(all_losses)
-    val_range = max_val - min_val if max_val != min_val else 1
+    bar = f"[{gradient}]{'█' * filled}[/{gradient}][dim]{'░' * empty}[/dim]"
+    return bar
 
-    def get_y_pos(val: float, h: int) -> int:
-        return h - 1 - int(((val - min_val) / val_range) * (h - 1))
 
-    # Crea griglia
-    grid = [[" " for _ in range(len(train_losses))] for _ in range(height + 1)]
+def build_gpu_bar(util: float, width: int = 30) -> str:
+    filled = int(util / 100 * width)
+    empty = width - filled
+    color = get_util_color(util)
+    return f"[{color}]{'█' * filled}[/{color}][dim]{'░' * empty}[/dim]"
 
-    # Plotta punti train
-    for i, loss in enumerate(train_losses):
-        y = get_y_pos(loss, height)
-        if 0 <= y <= height:
-            grid[y][i] = "▓"
 
-    # Plotta eval se presente
-    if eval_loss is not None:
-        eval_y = get_y_pos(eval_loss, height)
-        if 0 <= eval_y <= height and len(train_losses) > 0:
-            grid[eval_y][len(train_losses) - 1] = "◆"
+def format_eta(seconds: int) -> str:
+    if seconds <= 0:
+        return "N/A"
 
-    # Disegna bordi
-    result = ""
-    for y in range(height, -1, -1):
-        line = ""
-        for x, cell in enumerate(grid[y]):
-            if y == 0 or y == height:
-                line += "─" if cell == " " else cell
-            else:
-                line += "│" if x == 0 else cell
-        result += line + "\n"
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    secs = seconds % 60
 
-    return result.strip()
+    if hours > 0:
+        return f"~{hours}h {minutes}m"
+    elif minutes > 0:
+        return f"~{minutes}m {secs}s"
+    return f"~{secs}s"
 
 
 def main():
-    """Main loop del monitor."""
-    # Clear iniziale
     os.system("cls" if os.name == "nt" else "clear")
 
     last_training_info = None
     refresh_interval = 3
+    start_time = time.time()
 
     while True:
-        # Clear screen ad ogni ciclo per evitare duplicati
         os.system("cls" if os.name == "nt" else "clear")
 
         training_info = find_training_info()
@@ -474,7 +632,6 @@ def main():
             last_training_info = training_info
 
         if not training_info["running"]:
-            # Show appropriate message based on status
             if training_info["status"] == "crashed":
                 console.print(
                     Panel(
@@ -525,16 +682,46 @@ def main():
             except Exception:
                 pass
 
-        # Try to get metrics from trainer_state.json first (more reliable)
+        log_metrics = parse_log_metrics(log_content)
+
+        metrics = {
+            "train_loss": [],
+            "eval_loss": None,
+            "learning_rate": None,
+            "epoch": 0.0,
+            "grad_norm": None,
+            "total_steps": 5139,
+            "current_step": 0,
+        }
+
         if training_info.get("output_dir"):
             trainer_metrics = parse_trainer_state(training_info["output_dir"])
-            # If trainer_state has data, use it
             if trainer_metrics.get("train_loss"):
-                metrics = trainer_metrics
-            else:
-                metrics = parse_log_metrics(log_content)
-        else:
-            metrics = parse_log_metrics(log_content)
+                metrics["train_loss"] = trainer_metrics["train_loss"]
+                metrics["eval_loss"] = trainer_metrics["eval_loss"]
+                metrics["learning_rate"] = trainer_metrics["learning_rate"]
+                metrics["grad_norm"] = trainer_metrics["grad_norm"]
+                metrics["epoch"] = trainer_metrics["epoch"]
+                metrics["total_steps"] = trainer_metrics["total_steps"]
+                metrics["current_step"] = trainer_metrics["current_step"]
+
+        if log_metrics.get("current_step", 0) > metrics.get("current_step", 0):
+            metrics["current_step"] = log_metrics["current_step"]
+            metrics["total_steps"] = log_metrics["total_steps"]
+
+        if not metrics["train_loss"] and log_metrics.get("train_loss"):
+            metrics["train_loss"] = log_metrics["train_loss"]
+        if metrics["learning_rate"] is None and log_metrics.get("learning_rate"):
+            metrics["learning_rate"] = log_metrics["learning_rate"]
+        if metrics["grad_norm"] is None and log_metrics.get("grad_norm"):
+            metrics["grad_norm"] = log_metrics["grad_norm"]
+        if metrics["epoch"] == 0.0 and log_metrics.get("epoch"):
+            metrics["epoch"] = log_metrics["epoch"]
+        if metrics["eval_loss"] is None and log_metrics.get("eval_loss"):
+            metrics["eval_loss"] = log_metrics["eval_loss"]
+
+        if metrics["train_loss"]:
+            loss_tracker.add_loss(metrics["train_loss"][-1])
 
         gpu = get_gpu_metrics()
         system = get_system_metrics()
@@ -545,98 +732,147 @@ def main():
             else 0
         )
 
-        status_color = "green"
-        status_text = f"● Attivo (PID: {training_info['pid']})"
+        elapsed_time = int(time.time() - start_time)
+        if progress_pct > 0 and elapsed_time > 10:
+            total_estimated = int(elapsed_time / (progress_pct / 100))
+            eta_seconds = total_estimated - elapsed_time
+            eta_str = format_eta(eta_seconds)
+        else:
+            eta_str = "Calculating..."
 
-        # Calculate time since last log update
+        time_since_update = 0
         if training_info.get("last_update", 0) > 0:
             time_since_update = time.time() - training_info["last_update"]
-            if time_since_update > 60:
-                update_str = f"{int(time_since_update // 60)}m"
-            else:
-                update_str = f"{int(time_since_update)}s"
-            status_text += f" | Log: {update_str} fa"
 
-        current_loss = (
-            f"{metrics['train_loss'][-1]:.6f}" if metrics["train_loss"] else "N/A"
+        if time_since_update > 60:
+            update_str = f"{int(time_since_update // 60)}m"
+        else:
+            update_str = f"{int(time_since_update)}s"
+
+        trend_arrow, trend_color = loss_tracker.get_trend()
+        change_rate = loss_tracker.get_change_rate()
+
+        current_loss_str = (
+            format_decimal(metrics["train_loss"][-1])
+            if metrics["train_loss"]
+            else "N/A"
         )
-        eval_loss_str = f"{metrics['eval_loss']:.6f}" if metrics["eval_loss"] else "N/A"
+        eval_loss_str = (
+            format_decimal(metrics["eval_loss"]) if metrics["eval_loss"] else "N/A"
+        )
         lr_str = (
-            f"{metrics['learning_rate']:.2e}" if metrics["learning_rate"] else "N/A"
+            format_decimal(metrics["learning_rate"])
+            if metrics["learning_rate"]
+            else "N/A"
         )
-        grad_str = f"{metrics['grad_norm']:.6f}" if metrics["grad_norm"] else "N/A"
+        grad_str = (
+            format_decimal(metrics["grad_norm"]) if metrics["grad_norm"] else "N/A"
+        )
 
-        vram_str = "N/A"
-        gpu_util_str = "N/A"
-        temp_str = "N/A"
+        progress_bar = build_progress_bar(progress_pct, width=50)
+
+        output = f"""[{COLORS["header"]}]╭────────────────── TRAINING MONITOR ──────────────────╮[/{COLORS["header"]}]
+│ [{COLORS["success"]}]✅ Running[/{COLORS["success"]}] (PID: {training_info["pid"]}) │ Last update: [{COLORS["info"]}]{update_str}[/{COLORS["info"]}] ago      │
+[{COLORS["header"]}]├──────────────────────────────────────────────────────┤[/{COLORS["header"]}]
+│ [{COLORS["metric"]}]Progress[/{COLORS["metric"]}]                                            │
+│ {progress_bar} [{get_progress_color(progress_pct)}]{progress_pct:.1f}%[/{get_progress_color(progress_pct)}]       │
+│ Step [{COLORS["value"]}]{metrics["current_step"]}[/{COLORS["value"]}]/[{COLORS["value"]}]{metrics["total_steps"]}[/{COLORS["value"]}] │ Epoch [{COLORS["value"]}]{metrics["epoch"]:.2f}[/{COLORS["value"]}]/3 │ ETA: [{COLORS["info"]}]{eta_str}[/{COLORS["info"]}]           │
+[{COLORS["header"]}]├──────────────────────────────────────────────────────┤[/{COLORS["header"]}]
+│ [{COLORS["metric"]}]📊 Metrics[/{COLORS["metric"]}]                      [{COLORS["metric"]}]📈 Loss Trend[/{COLORS["metric"]}]          │"""
+
+        chart = draw_loss_chart(
+            metrics["train_loss"], metrics["eval_loss"], width=28, height=5
+        )
+        chart_lines = chart.split("\n")
+
+        metric_lines = [
+            f"Train Loss: [{trend_color}]{current_loss_str} {trend_arrow}[/{trend_color}]",
+            f"Eval Loss:  [{COLORS['value']}]{eval_loss_str}[/{COLORS['value']}]",
+            f"LR:         [{COLORS['value']}]{lr_str}[/{COLORS['value']}]",
+            f"Grad Norm:  [{COLORS['value']}]{grad_str}[/{COLORS['value']}]",
+        ]
+
+        metrics_box_width = 28
+        chart_box_width = 54 - metrics_box_width - 3
+
+        output += f"\n│ ┌{'─' * (metrics_box_width - 2)}┐ {' ' * chart_box_width}│"
+
+        for i, chart_line in enumerate(chart_lines):
+            if i < len(metric_lines):
+                metric_line = metric_lines[i]
+                metric_content = f"│ {metric_line}"
+                metric_padded = metric_content[:metrics_box_width].ljust(
+                    metrics_box_width
+                )
+            else:
+                metric_padded = "│" + " " * (metrics_box_width - 1)
+
+            chart_stripped = chart_line.replace("[dim]", "").replace("[/dim]", "")
+            chart_stripped = chart_stripped.replace(
+                f"[{COLORS['chart_train']}]", ""
+            ).replace(f"[/{COLORS['chart_train']}]", "")
+            chart_stripped = chart_stripped.replace(
+                f"[{COLORS['chart_eval']}]", ""
+            ).replace(f"[/{COLORS['chart_eval']}]", "")
+            chart_display = chart_line
+
+            output += f"\n│ {metric_padded}│ {chart_display}"
+
+        output += f"\n│ └{'─' * (metrics_box_width - 2)}┘ {' ' * chart_box_width}│"
+
         if gpu["available"]:
             vram_pct = (
                 (gpu["vram_used"] / gpu["vram_total"] * 100)
                 if gpu["vram_total"] > 0
                 else 0
             )
-            vram_str = (
-                f"{gpu['vram_used']:.0f}/{gpu['vram_total']:.0f}MB ({vram_pct:.0f}%)"
+            gpu_bar = build_gpu_bar(gpu["utilization"], width=20)
+            temp_color = get_temp_color(gpu["temperature"])
+            util_color = get_util_color(gpu["utilization"])
+            vram_color = get_vram_color(vram_pct)
+
+            output += f"""
+[{COLORS["header"]}]├──────────────────────────────────────────────────────┤[/{COLORS["header"]}]
+│ [{COLORS["metric"]}]🖥️ System Resources[/{COLORS["metric"]}]                               │
+│ GPU: [{COLORS["value"]}]{markup.escape(gpu["name"])}[/{COLORS["value"]}]                                    │
+│ VRAM: [{vram_color}]{gpu["vram_used"]:.0f}[/{vram_color}]/[{COLORS["value"]}]{gpu["vram_total"]:.0f}[/{COLORS["value"]}]MB ([{vram_color}]{vram_pct:.0f}%[/{vram_color}]) │ Util: [{util_color}]{gpu["utilization"]:.0f}%[/{util_color}]      │
+│     {gpu_bar}             │
+│ Temp: [{temp_color}]{gpu["temperature"]:.0f}°C[/{temp_color}] │ RAM: [{COLORS["value"]}]{system["ram_used"]:.0f}[/{COLORS["value"]}]/[{COLORS["value"]}]{system["ram_total"]:.0f}[/{COLORS["value"]}]MB │ CPU: [{COLORS["value"]}]{system["cpu_percent"]:.1f}%[/{COLORS["value"]}]          │"""
+        else:
+            ram_pct = (
+                (system["ram_used"] / system["ram_total"] * 100)
+                if system["ram_total"] > 0
+                else 0
             )
-            gpu_util_str = f"{gpu['utilization']:.0f}%"
-            temp_str = f"{gpu['temperature']:.0f}°C"
-
-        ram_pct = (
-            (system["ram_used"] / system["ram_total"] * 100)
-            if system["ram_total"] > 0
-            else 0
-        )
-        ram_str = (
-            f"{system['ram_used']:.0f}/{system['ram_total']:.0f}MB ({ram_pct:.0f}%)"
-        )
-        cpu_str = f"{system['cpu_percent']:.1f}%"
-
-        chart = draw_loss_chart(metrics["train_loss"], metrics["eval_loss"])
+            output += f"""
+[{COLORS["header"]}]├──────────────────────────────────────────────────────┤[/{COLORS["header"]}]
+│ [{COLORS["metric"]}]🖥️ System Resources[/{COLORS["metric"]}]                               │
+│ GPU: [dim]Not available[/dim]                                     │
+│ RAM: [{COLORS["value"]}]{system["ram_used"]:.0f}[/{COLORS["value"]}]/[{COLORS["value"]}]{system["ram_total"]:.0f}[/{COLORS["value"]}]MB ([{COLORS["value"]}]{ram_pct:.0f}%[/{COLORS["value"]}]) │ CPU: [{COLORS["value"]}]{system["cpu_percent"]:.1f}%[/{COLORS["value"]}]             │"""
 
         last_logs = []
         if training_info["log_file"] and os.path.exists(training_info["log_file"]):
             try:
                 with open(training_info["log_file"], "r") as f:
                     lines = f.readlines()
-                    last_logs = [l.strip() for l in lines[-3:] if l.strip()]
+                    last_logs = [l.strip() for l in lines[-2:] if l.strip()]
             except Exception:
                 pass
 
-        progress_bar = "█" * int(progress_pct // 2) + "░" * (
-            50 - int(progress_pct // 2)
-        )
+        output += f"""
+[{COLORS["header"]}]├──────────────────────────────────────────────────────┤[/{COLORS["header"]}]
+│ [{COLORS["metric"]}]📝 Recent Log[/{COLORS["metric"]}]                                      │"""
 
-        output = f"""[bold cyan]TRAINING MONITOR[/bold cyan]                    [bold {status_color}]{status_text}[/bold {status_color}]
+        for line in last_logs[-2:]:
+            truncated = line[:70] + "..." if len(line) > 70 else line
+            output += f"\n│ [dim]{markup.escape(truncated)}[/dim]"
 
-Progresso: Step {metrics["current_step"]}/{metrics["total_steps"]} ({progress_pct:.1f}%)  |  Epoch {metrics["epoch"]:.2f}/3
-{progress_bar}
+        output += f"""
+[{COLORS["header"]}]╰──────────────────────────────────────────────────────╯[/{COLORS["header"]}]"""
 
-[bold]Trend Loss[/bold]                      [bold]Metriche[/bold]
-{chart:<40} Train: {current_loss}
-                               Eval:  {eval_loss_str}
-                               LR:    {lr_str}
-                               Grad:  {grad_str}
+        output += f"\n[dim]Ctrl+C to exit │ Refresh: {refresh_interval}s │ Dir: {markup.escape(training_info['output_dir'])}[/dim]"
 
-[bold]Risorse:[/bold]
-  GPU VRAM: {vram_str:<25} GPU Util: {gpu_util_str}
-  GPU Temp: {temp_str:<25} CPU: {cpu_str}
-  RAM: {ram_str}
-
-[bold]Log Recenti:[/bold]
-"""
-        for line in last_logs[-3:]:
-            output += f"  {line[:80]}\n"
-
-        output += f"\nCtrl+C per uscire | Aggiornamento: {refresh_interval}s"
-
-        panel = Panel(
-            output,
-            border_style="blue",
-            title=f"Training: {training_info['output_dir']}",
-            padding=(0, 1),
-        )
-
-        console.print(panel)
+        console.print(output)
         time.sleep(refresh_interval)
 
 

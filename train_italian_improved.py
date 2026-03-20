@@ -97,6 +97,48 @@ def _signal_handler(signum, frame):
     _shutdown_requested = True
 
 
+def cleanup_memory(message: str = ""):
+    """Pulizia aggressiva della memoria."""
+    gc.collect()
+    torch.cuda.empty_cache()
+    if message:
+        logger.info(f"[GC] {message} - GPU: {torch.cuda.memory_allocated()/1e9:.2f} GB")
+
+
+def deduplicate_samples(samples):
+    """Rimuove campioni duplicati basandosi su instruction+output."""
+    seen = set()
+    unique_samples = []
+    
+    for sample in samples:
+        key = (
+            sample.get("instruction", "") + "||" + sample.get("output", "") +
+            "||" + sample.get("text", "")
+        )
+        if key not in seen:
+            seen.add(key)
+            unique_samples.append(sample)
+    
+    removed = len(samples) - len(unique_samples)
+    if removed > 0:
+        logger.info(f"[DEDUP] Rimossi {removed} campioni duplicati")
+    
+    return unique_samples
+
+
+class MemoryCleanupCallback:
+    """Callback per pulizia memoria periodica durante training."""
+    
+    def __init__(self, cleanup_steps: int = 50):
+        self.cleanup_steps = cleanup_steps
+        self.step_count = 0
+    
+    def on_step_end(self, args, state, control, **kwargs):
+        self.step_count += 1
+        if self.step_count % self.cleanup_steps == 0:
+            cleanup_memory(f"Step {state.global_step}")
+
+
 # Registra handler per segnali di terminazione
 signal.signal(signal.SIGINT, _signal_handler)
 signal.signal(signal.SIGTERM, _signal_handler)
@@ -613,6 +655,10 @@ Esempi di utilizzo:
         logger.error("Nessun campione caricato!")
         return
 
+    # Deduplica campioni per ridurre memoria
+    all_samples = deduplicate_samples(all_samples)
+    cleanup_memory("Dopo deduplicazione")
+
     model, tokenizer = setup_model_and_tokenizer(config)
 
     logger.info("Creazione dataset PyTorch...")
@@ -628,6 +674,9 @@ Esempi di utilizzo:
     logger.info(f"Train: {len(train_dataset)} campioni")
     logger.info(f"Eval: {len(eval_dataset)} campioni")
 
+    # Pulizia memoria dopo creazione dataset
+    cleanup_memory("Dopo creazione dataset")
+
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
     training_args = create_training_arguments(config)
@@ -636,6 +685,7 @@ Esempi di utilizzo:
         early_stopping_patience=EARLY_STOPPING_PATIENCE,
         early_stopping_threshold=EARLY_STOPPING_THRESHOLD,
     )
+    memory_callback = MemoryCleanupCallback(cleanup_steps=50)
 
     trainer = Trainer(
         model=model,
@@ -643,7 +693,7 @@ Esempi di utilizzo:
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=data_collator,
-        callbacks=[early_stopping],
+        callbacks=[early_stopping, memory_callback],
     )
 
     print("\n" + "=" * 60)

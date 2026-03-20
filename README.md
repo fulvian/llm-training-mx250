@@ -32,6 +32,9 @@ Questo progetto implementa un sistema di fine-tuning di LLM per la lingua italia
 - ✅ Logging dettagliato
 - ✅ Pulizia automatica file PID su crash/terminazione
 - ✅ Rilevamento crash training nel monitor
+- ✅ Deduplicazione automatica campioni dataset
+- ✅ Garbage collection periodica durante training
+- ✅ Pulizia memoria GPU strategica
 
 ## 📦 Prerequisiti
 
@@ -358,6 +361,14 @@ Per problemi o domande:
 ---
 
 ## 📝 Changelog
+
+### 2026-03-20
+- **Memory**: Aggiunta deduplicazione automatica campioni dataset
+- **Memory**: Aggiunta garbage collection periodica (ogni 50 step)
+- **Memory**: Aggiunta pulizia memoria GPU dopo creazione dataset
+- **Memory**: Aggiunta funzione cleanup_memory() per pulizia aggressiva
+- **Memory**: Aggiunto MemoryCleanupCallback per gestione memoria dinamica
+- **Memory**: Ridotto eval_size a 200 campioni
 
 ### 2026-03-20
 - **Feat**: Aggiunto script `prepare_datasets.py` per preparare dataset locali

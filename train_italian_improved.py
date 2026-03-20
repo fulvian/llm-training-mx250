@@ -13,6 +13,7 @@ import signal
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -420,7 +421,10 @@ def setup_model_and_tokenizer(config: TrainingConfig):
 
 def create_training_arguments(config: TrainingConfig) -> TrainingArguments:
     """Crea gli argomenti di training."""
-    logger.info(f"Resume checkpoint config: {config.resume_from_checkpoint}")
+    if config.resume_from_checkpoint:
+        logger.info(f"🔄 RESUMING from checkpoint: {config.resume_from_checkpoint}")
+    else:
+        logger.info("🆕 FRESH TRAINING - Starting from scratch")
 
     return TrainingArguments(
         output_dir=config.output_dir,
@@ -640,9 +644,15 @@ Esempi di utilizzo:
 
         pid_file = os.path.join(config.output_dir, ".training_pid")
 
-        with open(
-            training_log_file := os.path.join(config.output_dir, "training.log"), "w"
-        ) as log_file:
+        training_log_file = os.path.join(config.output_dir, "training.log")
+
+        with open(training_log_file, "a") as log_file:
+            log_file.write("\n" + "=" * 60 + "\n")
+            log_file.write(f"Session started: {datetime.now().isoformat()}\n")
+            if config.resume_from_checkpoint:
+                log_file.write(f"Resuming from: {config.resume_from_checkpoint}\n")
+            log_file.write("=" * 60 + "\n\n")
+
             process = subprocess.Popen(
                 cmd,
                 stdout=log_file,

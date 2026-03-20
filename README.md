@@ -27,9 +27,11 @@ Questo progetto implementa un sistema di fine-tuning di LLM per la lingua italia
 - ✅ Resume automatico da checkpoint
 - ✅ Training in background (sopravvive a disconnessioni SSH)
 - ✅ Monitoraggio real-time con CLI
+- ✅ Indicatore visivo di stato nel monitor (live/checkpoint)
 - ✅ Gestione errori con checkpoint di emergenza
 - ✅ Singleton training (previene multipli processi)
 - ✅ Logging dettagliato
+- ✅ Log persistenti tra sessioni
 - ✅ Pulizia automatica file PID su crash/terminazione
 - ✅ Rilevamento crash training nel monitor
 - ✅ Deduplicazione automatica campioni dataset
@@ -138,10 +140,13 @@ python3 monitor_training.py
 
 #### Funzionalità
 
-- mostra progresso training (step, epoch)
+- Mostra progresso training (step, epoch)
 - Visualizza metriche (loss, eval_loss, learning_rate)
 - Monitor risorse (GPU VRAM, utilization, temperature)
 - Trend chart ASCII per loss
+- Supporto per training resumed da checkpoint
+- Indicazione dell'origine dei dati (src: live / src: checkpoint)
+- Messaggio di stato resume
 - Log recenti
 - Aggiornamento automatico ogni 3 secondi
 
@@ -236,7 +241,11 @@ Il monitor mostra:
 - Trend loss (ASCII chart)
 - Metriche (train_loss, eval_loss, learning_rate)
 - Risorse GPU (VRAM, utilization, temperatura)
+- Origine dati: live (dati in tempo reale) o checkpoint (dati da ultimo checkpoint)
+- Indicatore visivo "🔄 RESUMED from step X" quando si riprende da checkpoint
 - Log recenti
+
+**Comportamento con resume**: Quando il training viene ripreso da checkpoint, il monitor mostra automaticamente i dati live più recenti. Il parametro `src` indica la fonte dei dati: `src: live` per dati in tempo reale dal log attivo, `src: checkpoint` per dati letti dall'ultimo checkpoint salvato.
 
 ### File di Log
 
@@ -361,6 +370,13 @@ Per problemi o domande:
 ---
 
 ## 📝 Changelog
+
+### 2026-03-20
+- **Fix**: Monitor ora mostra correttamente i dati live durante resume da checkpoint
+- **Fix**: Monitor distingue tra dati live e dati da checkpoint
+- **Feat**: Log training ora in modalità append invece di sovrascrivere
+- **Feat**: Separatore con data/ora all'inizio di ogni sessione training
+- **Feat**: Messaggi più informativi su stato resume nel log
 
 ### 2026-03-20
 - **Fix**: MemoryCleanupCallback ora eredita da TrainerCallback

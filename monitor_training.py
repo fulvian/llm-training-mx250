@@ -52,6 +52,7 @@ COLORS = {
     "temp_warm": "green",
     "temp_hot": "yellow",
     "temp_critical": "red",
+    "resume": "bold yellow",
 }
 
 console = Console()
@@ -371,6 +372,8 @@ def parse_trainer_state(output_dir: str) -> dict[str, Any]:
         "grad_norm": None,
         "total_steps": 5139,
         "current_step": 0,
+        "starting_step": 0,
+        "checkpoint_path": None,
     }
 
     try:
@@ -391,6 +394,7 @@ def parse_trainer_state(output_dir: str) -> dict[str, Any]:
 
         checkpoint_dirs.sort(key=lambda x: x[0])
         latest_checkpoint = checkpoint_dirs[-1][1]
+        starting_step = checkpoint_dirs[-1][0]
         trainer_state_file = os.path.join(latest_checkpoint, "trainer_state.json")
 
         if not os.path.exists(trainer_state_file):
@@ -404,6 +408,8 @@ def parse_trainer_state(output_dir: str) -> dict[str, Any]:
         metrics["total_steps"] = trainer_state.get("max_steps", 5139)
         metrics["current_step"] = trainer_state.get("global_step", 0)
         metrics["epoch"] = trainer_state.get("epoch", 0.0)
+        metrics["starting_step"] = starting_step
+        metrics["checkpoint_path"] = latest_checkpoint
 
         train_losses = []
         last_train_entry = None
@@ -692,10 +698,15 @@ def main():
             "grad_norm": None,
             "total_steps": 5139,
             "current_step": 0,
+            "starting_step": 0,
+            "checkpoint_path": None,
+            "data_source": "checkpoint",
         }
 
         if training_info.get("output_dir"):
             trainer_metrics = parse_trainer_state(training_info["output_dir"])
+            metrics["starting_step"] = trainer_metrics.get("starting_step", 0)
+            metrics["checkpoint_path"] = trainer_metrics.get("checkpoint_path")
             if trainer_metrics.get("train_loss"):
                 metrics["train_loss"] = trainer_metrics["train_loss"]
                 metrics["eval_loss"] = trainer_metrics["eval_loss"]
@@ -705,19 +716,25 @@ def main():
                 metrics["total_steps"] = trainer_metrics["total_steps"]
                 metrics["current_step"] = trainer_metrics["current_step"]
 
-        if log_metrics.get("current_step", 0) > metrics.get("current_step", 0):
+        if log_metrics.get("current_step", 0) > 0:
+            metrics["data_source"] = "live"
             metrics["current_step"] = log_metrics["current_step"]
             metrics["total_steps"] = log_metrics["total_steps"]
 
-        if not metrics["train_loss"] and log_metrics.get("train_loss"):
+        if log_metrics.get("train_loss"):
+            metrics["data_source"] = "live"
             metrics["train_loss"] = log_metrics["train_loss"]
-        if metrics["learning_rate"] is None and log_metrics.get("learning_rate"):
+        if log_metrics.get("learning_rate"):
+            metrics["data_source"] = "live"
             metrics["learning_rate"] = log_metrics["learning_rate"]
-        if metrics["grad_norm"] is None and log_metrics.get("grad_norm"):
+        if log_metrics.get("grad_norm"):
+            metrics["data_source"] = "live"
             metrics["grad_norm"] = log_metrics["grad_norm"]
-        if metrics["epoch"] == 0.0 and log_metrics.get("epoch"):
+        if log_metrics.get("epoch"):
+            metrics["data_source"] = "live"
             metrics["epoch"] = log_metrics["epoch"]
-        if metrics["eval_loss"] is None and log_metrics.get("eval_loss"):
+        if log_metrics.get("eval_loss"):
+            metrics["data_source"] = "live"
             metrics["eval_loss"] = log_metrics["eval_loss"]
 
         if metrics["train_loss"]:
@@ -771,12 +788,16 @@ def main():
 
         progress_bar = build_progress_bar(progress_pct, width=50)
 
+        resume_indicator = ""
+        if metrics["starting_step"] > 0 and metrics["data_source"] == "checkpoint":
+            resume_indicator = f" [{COLORS['resume']}]🔄 RESUMED from step {metrics['starting_step']}[/{COLORS['resume']}]"
+
         output = f"""[{COLORS["header"]}]╭────────────────── TRAINING MONITOR ──────────────────╮[/{COLORS["header"]}]
-│ [{COLORS["success"]}]✅ Running[/{COLORS["success"]}] (PID: {training_info["pid"]}) │ Last update: [{COLORS["info"]}]{update_str}[/{COLORS["info"]}] ago      │
+│ [{COLORS["success"]}]✅ Running[/{COLORS["success"]}] (PID: {training_info["pid"]}){resume_indicator} │ Last update: [{COLORS["info"]}]{update_str}[/{COLORS["info"]}] ago   │
 [{COLORS["header"]}]├──────────────────────────────────────────────────────┤[/{COLORS["header"]}]
 │ [{COLORS["metric"]}]Progress[/{COLORS["metric"]}]                                            │
 │ {progress_bar} [{get_progress_color(progress_pct)}]{progress_pct:.1f}%[/{get_progress_color(progress_pct)}]       │
-│ Step [{COLORS["value"]}]{metrics["current_step"]}[/{COLORS["value"]}]/[{COLORS["value"]}]{metrics["total_steps"]}[/{COLORS["value"]}] │ Epoch [{COLORS["value"]}]{metrics["epoch"]:.2f}[/{COLORS["value"]}]/3 │ ETA: [{COLORS["info"]}]{eta_str}[/{COLORS["info"]}]           │
+│ Step [{COLORS["value"]}]{metrics["current_step"]}[/{COLORS["value"]}]/[{COLORS["value"]}]{metrics["total_steps"]}[/{COLORS["value"]}] (src: {metrics["data_source"]}) │ Epoch [{COLORS["value"]}]{metrics["epoch"]:.2f}[/{COLORS["value"]}]/3 │ ETA: [{COLORS["info"]}]{eta_str}[/{COLORS["info"]}]        │
 [{COLORS["header"]}]├──────────────────────────────────────────────────────┤[/{COLORS["header"]}]
 │ [{COLORS["metric"]}]📊 Metrics[/{COLORS["metric"]}]                      [{COLORS["metric"]}]📈 Loss Trend[/{COLORS["metric"]}]          │"""
 

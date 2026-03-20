@@ -247,10 +247,30 @@ Il monitor mostra:
 
 **Comportamento con resume**: Quando il training viene ripreso da checkpoint, il monitor mostra automaticamente i dati live più recenti. Il parametro `src` indica la fonte dei dati: `src: live` per dati in tempo reale dal log attivo, `src: checkpoint` per dati letti dall'ultimo checkpoint salvato.
 
+### TensorBoard
+
+Il training è configurato per inviare le metriche a TensorBoard. Per visualizzare i grafici in tempo reale:
+
+```bash
+# Avvia TensorBoard in una nuova finestra/terminale
+tensorboard --logdir ./smollm_italian_improved/logs --port 6006
+
+# Apri nel browser
+http://localhost:6006
+```
+
+#### Metriche Disponibili
+
+- **train_loss**: Loss del training (aggiornato ogni 10 step)
+- **eval_loss**: Loss di validazione (aggiornato ogni 200 step)
+- **learning_rate**: Learning rate corrente
+- **grad_norm**: Normale del gradiente
+- **epoch**: Epoch corrente
+
 ### File di Log
 
 - **Training Log**: `./smollm_italian_improved/training.log`
-- **TensorBoard Logs**: `./logs_smollm_improved/` (non configurato per default)
+- **TensorBoard Logs**: `./smollm_italian_improved/logs/`
 - **Checkpoints**: `./smollm_italian_improved/checkpoint-*`
 
 ### Verifica Training in corso
@@ -372,6 +392,8 @@ Per problemi o domande:
 ## 📝 Changelog
 
 ### 2026-03-20
+- **Feat**: TensorBoard ora abilitato nel training (`report_to="tensorboard"`)
+- **Feat**: Aggiunta documentazione TensorBoard al README
 - **Fix**: Monitor ora mostra correttamente i dati live durante resume da checkpoint
 - **Fix**: Monitor distingue tra dati live e dati da checkpoint
 - **Feat**: Log training ora in modalità append invece di sovrascrivere

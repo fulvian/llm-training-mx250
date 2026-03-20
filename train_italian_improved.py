@@ -456,7 +456,7 @@ def create_training_arguments(config: TrainingConfig) -> TrainingArguments:
         metric_for_best_model="eval_loss",
         dataloader_num_workers=0,
         remove_unused_columns=False,
-        report_to="none",
+        report_to="tensorboard",
     )
 
 

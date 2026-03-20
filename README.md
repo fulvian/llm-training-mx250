@@ -363,6 +363,12 @@ Per problemi o domande:
 ## 📝 Changelog
 
 ### 2026-03-20
+- **Fix**: MemoryCleanupCallback ora eredita da TrainerCallback
+- **Fix**: Implementati tutti i metodi callback richiesti da HuggingFace Trainer
+- **Fix**: Risolto errore AttributeError su on_init_end, on_epoch_begin
+- **Fix**: Aggiunto TrainerCallback agli import
+
+### 2026-03-20
 - **Memory**: Aggiunta deduplicazione automatica campioni dataset
 - **Memory**: Aggiunta garbage collection periodica (ogni 50 step)
 - **Memory**: Aggiunta pulizia memoria GPU dopo creazione dataset

@@ -27,6 +27,7 @@ from transformers import (
     DataCollatorForLanguageModeling,
     EarlyStoppingCallback,
     Trainer,
+    TrainerCallback,
     TrainingArguments,
 )
 
@@ -102,41 +103,84 @@ def cleanup_memory(message: str = ""):
     gc.collect()
     torch.cuda.empty_cache()
     if message:
-        logger.info(f"[GC] {message} - GPU: {torch.cuda.memory_allocated()/1e9:.2f} GB")
+        logger.info(
+            f"[GC] {message} - GPU: {torch.cuda.memory_allocated() / 1e9:.2f} GB"
+        )
 
 
 def deduplicate_samples(samples):
     """Rimuove campioni duplicati basandosi su instruction+output."""
     seen = set()
     unique_samples = []
-    
+
     for sample in samples:
         key = (
-            sample.get("instruction", "") + "||" + sample.get("output", "") +
-            "||" + sample.get("text", "")
+            sample.get("instruction", "")
+            + "||"
+            + sample.get("output", "")
+            + "||"
+            + sample.get("text", "")
         )
         if key not in seen:
             seen.add(key)
             unique_samples.append(sample)
-    
+
     removed = len(samples) - len(unique_samples)
     if removed > 0:
         logger.info(f"[DEDUP] Rimossi {removed} campioni duplicati")
-    
+
     return unique_samples
 
 
-class MemoryCleanupCallback:
+class MemoryCleanupCallback(TrainerCallback):
     """Callback per pulizia memoria periodica durante training."""
-    
+
     def __init__(self, cleanup_steps: int = 50):
         self.cleanup_steps = cleanup_steps
         self.step_count = 0
-    
-    def on_step_end(self, args, state, control, **kwargs):
+
+    def on_step_end(self, args, args_state, control, **kwargs):
         self.step_count += 1
         if self.step_count % self.cleanup_steps == 0:
-            cleanup_memory(f"Step {state.global_step}")
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+    def on_init_end(self, args, state, control, **kwargs):
+        pass
+
+    def on_train_begin(self, args, state, control, **kwargs):
+        pass
+
+    def on_train_end(self, args, state, control, **kwargs):
+        pass
+
+    def on_evaluate(self, args, state, control, metrics, **kwargs):
+        pass
+
+    def on_epoch_begin(self, args, state, control, **kwargs):
+        pass
+
+    def on_epoch_end(self, args, state, control, **kwargs):
+        pass
+
+    def on_step_begin(self, args, state, control, **kwargs):
+        pass
+
+    def on_prediction_step(self, args, state, control, **kwargs):
+        pass
+
+    def on_log(self, args, state, control, logs, **kwargs):
+        pass
+
+    def on_save(self, args, state, control, **kwargs):
+        pass
+
+    def on_batch_begin(self, args, state, control, batch, **kwargs):
+        pass
+
+    def on_batch_end(self, args, state, control, loss, **kwargs):
+        pass
 
 
 # Registra handler per segnali di terminazione

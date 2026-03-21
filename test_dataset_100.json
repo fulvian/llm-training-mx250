@@ -1,0 +1,402 @@
+[
+  {
+    "text": "pizza è una tradizione italiana molto antica.",
+    "source": "test"
+  },
+  {
+    "text": "gelato è una tradizione italiana molto antica.",
+    "source": "test"
+  },
+  {
+    "text": "Milano è una città molto bella situata in Sicilia.",
+    "source": "test"
+  },
+  {
+    "text": "musica è una tradizione italiana molto antica.",
+    "source": "test"
+  },
+  {
+    "text": "In Italia si mangia montagne con letteratura.",
+    "source": "test"
+  },
+  {
+    "text": "Firenze è una città molto bella situata in Veneto.",
+    "source": "test"
+  },
+  {
+    "text": "L'Italia è famosa per pasta e letteratura.",
+    "source": "test"
+  },
+  {
+    "text": "L'Italia è famosa per mare e gelato.",
+    "source": "test"
+  },
+  {
+    "text": "La gelato è un piatto tradizionale italiano.",
+    "source": "test"
+  },
+  {
+    "text": "In Italia si mangia musica con arte.",
+    "source": "test"
+  },
+  {
+    "text": "Bari è una città molto bella situata in Piemonte.",
+    "source": "test"
+  },
+  {
+    "text": "C'era una volta famiglia che viveva in un castello antico.",
+    "source": "test"
+  },
+  {
+    "text": "Bari è una città molto bella situata in Emilia-Romagna.",
+    "source": "test"
+  },
+  {
+    "text": "L'Italia è famosa per letteratura e storia.",
+    "source": "test"
+  },
+  {
+    "text": "In Italia si mangia gelato con pasta.",
+    "source": "test"
+  },
+  {
+    "text": "Gli italiani amano storia e vino.",
+    "source": "test"
+  },
+  {
+    "text": "laghi è una tradizione italiana molto antica.",
+    "source": "test"
+  },
+  {
+    "text": "Il musica è un monumento famoso di Napoli.",
+    "source": "test"
+  },
+  {
+    "text": "La musica italiana è conosciuta in tutto il mondo.",
+    "source": "test"
+  },
+  {
+    "text": "C'era una volta famiglia che viveva in una valle.",
+    "source": "test"
+  },
+  {
+    "text": "Palermo è una città molto bella situata in Toscana.",
+    "source": "test"
+  },
+  {
+    "text": "La Puglia è una regione famosa per pasta.",
+    "source": "test"
+  },
+  {
+    "text": "La mare è un piatto tradizionale italiano.",
+    "source": "test"
+  },
+  {
+    "text": "La Emilia-Romagna è una regione famosa per mare.",
+    "source": "test"
+  },
+  {
+    "text": "La montagne italiana è conosciuta in tutto il mondo.",
+    "source": "test"
+  },
+  {
+    "text": "Il cultura è un monumento famoso di Roma.",
+    "source": "test"
+  },
+  {
+    "text": "Il montagne è un monumento famoso di Bari.",
+    "source": "test"
+  },
+  {
+    "text": "Gli italiani amano storia e arte.",
+    "source": "test"
+  },
+  {
+    "text": "La montagne italiana è conosciuta in tutto il mondo.",
+    "source": "test"
+  },
+  {
+    "text": "La mare è un piatto tradizionale italiano.",
+    "source": "test"
+  },
+  {
+    "text": "vino è una tradizione italiana molto antica.",
+    "source": "test"
+  },
+  {
+    "text": "Gli italiani amano storia e formaggio.",
+    "source": "test"
+  },
+  {
+    "text": "Il storia è un monumento famoso di Milano.",
+    "source": "test"
+  },
+  {
+    "text": "C'era una volta donna che viveva in una fattoria.",
+    "source": "test"
+  },
+  {
+    "text": "Palermo è una città molto bella situata in Lazio.",
+    "source": "test"
+  },
+  {
+    "text": "campagna è una tradizione italiana molto antica.",
+    "source": "test"
+  },
+  {
+    "text": "La campagna è un piatto tradizionale italiano.",
+    "source": "test"
+  },
+  {
+    "text": "campagna è una tradizione italiana molto antica.",
+    "source": "test"
+  },
+  {
+    "text": "C'era una volta bambino che viveva in una valle.",
+    "source": "test"
+  },
+  {
+    "text": "Gli italiani amano musica e letteratura.",
+    "source": "test"
+  },
+  {
+    "text": "L'Italia è famosa per cultura e laghi.",
+    "source": "test"
+  },
+  {
+    "text": "In Italia si mangia arte con mare.",
+    "source": "test"
+  },
+  {
+    "text": "C'era una volta cavaliere che viveva in una villa sul mare.",
+    "source": "test"
+  },
+  {
+    "text": "C'era una volta poeta che viveva in una montagna.",
+    "source": "test"
+  },
+  {
+    "text": "In Italia si mangia arte con pizza.",
+    "source": "test"
+  },
+  {
+    "text": "storia è una tradizione italiana molto antica.",
+    "source": "test"
+  },
+  {
+    "text": "Genova è una città molto bella situata in Sicilia.",
+    "source": "test"
+  },
+  {
+    "text": "Bari è una città molto bella situata in Puglia.",
+    "source": "test"
+  },
+  {
+    "text": "La storia è un piatto tradizionale italiano.",
+    "source": "test"
+  },
+  {
+    "text": "Milano è una città molto bella situata in Lombardia.",
+    "source": "test"
+  },
+  {
+    "text": "Il arte è un monumento famoso di Bari.",
+    "source": "test"
+  },
+  {
+    "text": "Palermo è una città molto bella situata in Toscana.",
+    "source": "test"
+  },
+  {
+    "text": "L'Italia è famosa per città e mare.",
+    "source": "test"
+  },
+  {
+    "text": "L'Italia è famosa per arte e formaggio.",
+    "source": "test"
+  },
+  {
+    "text": "Il arte è un monumento famoso di Milano.",
+    "source": "test"
+  },
+  {
+    "text": "L'Italia è famosa per formaggio e storia.",
+    "source": "test"
+  },
+  {
+    "text": "Il storia è un monumento famoso di Genova.",
+    "source": "test"
+  },
+  {
+    "text": "La musica italiana è conosciuta in tutto il mondo.",
+    "source": "test"
+  },
+  {
+    "text": "Palermo è una città molto bella situata in Toscana.",
+    "source": "test"
+  },
+  {
+    "text": "In Italia si mangia laghi con campagna.",
+    "source": "test"
+  },
+  {
+    "text": "In Italia si mangia pizza con città.",
+    "source": "test"
+  },
+  {
+    "text": "L'Italia è famosa per gelato e storia.",
+    "source": "test"
+  },
+  {
+    "text": "Firenze è una città molto bella situata in Emilia-Romagna.",
+    "source": "test"
+  },
+  {
+    "text": "Il vino è un monumento famoso di Torino.",
+    "source": "test"
+  },
+  {
+    "text": "pasta è una tradizione italiana molto antica.",
+    "source": "test"
+  },
+  {
+    "text": "La letteratura italiana è conosciuta in tutto il mondo.",
+    "source": "test"
+  },
+  {
+    "text": "La musica italiana è conosciuta in tutto il mondo.",
+    "source": "test"
+  },
+  {
+    "text": "Palermo è una città molto bella situata in Calabria.",
+    "source": "test"
+  },
+  {
+    "text": "La pasta è un piatto tradizionale italiano.",
+    "source": "test"
+  },
+  {
+    "text": "La Veneto è una regione famosa per pizza.",
+    "source": "test"
+  },
+  {
+    "text": "La Toscana è una regione famosa per musica.",
+    "source": "test"
+  },
+  {
+    "text": "La vino italiana è conosciuta in tutto il mondo.",
+    "source": "test"
+  },
+  {
+    "text": "Genova è una città molto bella situata in Veneto.",
+    "source": "test"
+  },
+  {
+    "text": "Firenze è una città molto bella situata in Calabria.",
+    "source": "test"
+  },
+  {
+    "text": "La pasta italiana è conosciuta in tutto il mondo.",
+    "source": "test"
+  },
+  {
+    "text": "La mare italiana è conosciuta in tutto il mondo.",
+    "source": "test"
+  },
+  {
+    "text": "La Veneto è una regione famosa per montagne.",
+    "source": "test"
+  },
+  {
+    "text": "Il letteratura è un monumento famoso di Firenze.",
+    "source": "test"
+  },
+  {
+    "text": "La pizza italiana è conosciuta in tutto il mondo.",
+    "source": "test"
+  },
+  {
+    "text": "L'Italia è famosa per mare e vino.",
+    "source": "test"
+  },
+  {
+    "text": "pasta è una tradizione italiana molto antica.",
+    "source": "test"
+  },
+  {
+    "text": "L'Italia è famosa per montagne e arte.",
+    "source": "test"
+  },
+  {
+    "text": "In Italia si mangia laghi con vino.",
+    "source": "test"
+  },
+  {
+    "text": "L'Italia è famosa per formaggio e vino.",
+    "source": "test"
+  },
+  {
+    "text": "gelato è una tradizione italiana molto antica.",
+    "source": "test"
+  },
+  {
+    "text": "La pasta è un piatto tradizionale italiano.",
+    "source": "test"
+  },
+  {
+    "text": "C'era una volta uomo che viveva in un palazzo reale.",
+    "source": "test"
+  },
+  {
+    "text": "La laghi è un piatto tradizionale italiano.",
+    "source": "test"
+  },
+  {
+    "text": "Il cultura è un monumento famoso di Bologna.",
+    "source": "test"
+  },
+  {
+    "text": "La musica italiana è conosciuta in tutto il mondo.",
+    "source": "test"
+  },
+  {
+    "text": "La gelato italiana è conosciuta in tutto il mondo.",
+    "source": "test"
+  },
+  {
+    "text": "Il pasta è un monumento famoso di Bari.",
+    "source": "test"
+  },
+  {
+    "text": "Gli italiani amano città e arte.",
+    "source": "test"
+  },
+  {
+    "text": "La formaggio italiana è conosciuta in tutto il mondo.",
+    "source": "test"
+  },
+  {
+    "text": "Gli italiani amano pizza e laghi.",
+    "source": "test"
+  },
+  {
+    "text": "pasta è una tradizione italiana molto antica.",
+    "source": "test"
+  },
+  {
+    "text": "Il città è un monumento famoso di Genova.",
+    "source": "test"
+  },
+  {
+    "text": "In Italia si mangia vino con storia.",
+    "source": "test"
+  },
+  {
+    "text": "C'era una volta bambino che viveva in una montagna.",
+    "source": "test"
+  },
+  {
+    "text": "L'Italia è famosa per mare e arte.",
+    "source": "test"
+  }
+]

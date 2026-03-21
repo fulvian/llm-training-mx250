@@ -522,10 +522,19 @@ def find_training_info() -> dict[str, Any]:
         "training_start_time": None,
     }
 
+    # Directory di output possibili (in ordine di priorità)
     possible_dirs = [
-        "./smollm_italian_improved",
-        "./smollm_best_output",
-        "./italian-gpt2-qlora-output",
+        "./output_qlora_optimized",  # QLoRA ottimizzato (UNICO SCRIPT ATTIVO)
+    ]
+
+    # Log files possibili nella directory principale
+    possible_log_files = [
+        "train_qlora_optimized.log",  # QLoRA ottimizzato (UNICO SCRIPT ATTIVO)
+    ]
+
+    # Directory TensorBoard possibili
+    possible_tensorboard_dirs = [
+        "./logs_qlora_optimized",  # QLoRA ottimizzato (UNICO SCRIPT ATTIVO)
     ]
 
     found_valid_process = False
@@ -551,7 +560,7 @@ def find_training_info() -> dict[str, Any]:
                             info["pid"] = pid
                             info["output_dir"] = dirname
                             info["log_file"] = log_file
-                            info["log_dir"] = "./smollm_italian_improved/runs"
+                            info["log_dir"] = possible_tensorboard_dirs[0]
                             found_valid_process = True
                         else:
                             info["running"] = False
@@ -559,14 +568,14 @@ def find_training_info() -> dict[str, Any]:
                             info["pid"] = pid
                             info["output_dir"] = dirname
                             info["log_file"] = log_file
-                            info["log_dir"] = "./smollm_italian_improved/runs"
+                            info["log_dir"] = possible_tensorboard_dirs[0]
                             return info
             except (ValueError, FileNotFoundError, ProcessLookupError):
                 info["running"] = False
                 info["status"] = "crashed"
                 info["output_dir"] = dirname
                 info["log_file"] = os.path.join(dirname, "training.log")
-                info["log_dir"] = "./smollm_italian_improved/runs"
+                info["log_dir"] = possible_tensorboard_dirs[0]
                 return info
 
     if found_valid_process:
@@ -579,12 +588,34 @@ def find_training_info() -> dict[str, Any]:
             text=True,
         )
         for line in result.stdout.split("\n"):
-            if "train_italian" in line or "train_best" in line:
+            if (
+                "train_italian" in line
+                or "train_best" in line
+                or "train_qlora_optimized" in line
+            ):
                 if "python" in line and "grep" not in line:
                     parts = line.split()
                     if len(parts) > 1:
                         pid = int(parts[1])
 
+                        # Prima cerca i log files nella directory principale
+                        for log_filename in possible_log_files:
+                            if os.path.exists(log_filename):
+                                mtime = os.path.getmtime(log_filename)
+                                time_since_update = time.time() - mtime
+                                info["last_update"] = mtime
+
+                                info["running"] = True
+                                info["status"] = "running"
+                                info["pid"] = pid
+                                info["output_dir"] = possible_dirs[
+                                    0
+                                ]  # Usa il primo come default
+                                info["log_file"] = log_filename
+                                info["log_dir"] = possible_tensorboard_dirs[0]
+                                return info
+
+                        # Fallback: cerca nelle directory di output
                         for dirname in possible_dirs:
                             log_file = os.path.join(dirname, "training.log")
                             if os.path.exists(log_file):
@@ -592,22 +623,13 @@ def find_training_info() -> dict[str, Any]:
                                 time_since_update = time.time() - mtime
                                 info["last_update"] = mtime
 
-                                if time_since_update < 300:
-                                    info["running"] = True
-                                    info["status"] = "running"
-                                    info["pid"] = pid
-                                    info["output_dir"] = dirname
-                                    info["log_file"] = log_file
-                                    info["log_dir"] = "./smollm_italian_improved/runs"
-                                    return info
-                                else:
-                                    info["running"] = True
-                                    info["status"] = "running"
-                                    info["pid"] = pid
-                                    info["output_dir"] = dirname
-                                    info["log_file"] = log_file
-                                    info["log_dir"] = "./smollm_italian_improved/runs"
-                                    return info
+                                info["running"] = True
+                                info["status"] = "running"
+                                info["pid"] = pid
+                                info["output_dir"] = dirname
+                                info["log_file"] = log_file
+                                info["log_dir"] = possible_tensorboard_dirs[0]
+                                return info
     except Exception:
         pass
 
@@ -963,7 +985,7 @@ def build_tensorboard_section(tb_status: dict[str, Any], training_running: bool)
                 f"│ [{COLORS['info']}]Avvio manuale:[/{COLORS['info']}]                                       │"
             )
             lines.append(
-                f"│   [dim]tensorboard --logdir=./logs_smollm_improved[/dim]          │"
+                f"│   [dim]tensorboard --logdir=./logs_qlora_optimized[/dim]          │"
             )
             lines.append(
                 f"│   [dim]--port 6006 --bind_all[/dim]                               │"
@@ -1003,7 +1025,7 @@ def main():
     start_time = time.time()
 
     # Inizializza TensorBoard manager
-    tb_manager = TensorBoardManager("./smollm_italian_improved/runs", TENSORBOARD_PORT)
+    tb_manager = TensorBoardManager("./logs_qlora_optimized", TENSORBOARD_PORT)
     _tensorboard_manager = tb_manager
 
     while True:

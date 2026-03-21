@@ -1,0 +1,16 @@
+# Basic LLM Libraries
+torch>=2.0.0
+transformers>=4.35.0
+peft>=0.6.0
+trl>=0.7.0
+
+# Dataset Handling
+datasets>=2.14.0
+tqdm>=4.66.0
+
+# Visualization & Monitoring
+rich>=13.7.0
+numpy>=1.24.0
+
+# System Monitoring (GPU)
+psutil>=5.9.0

@@ -98,45 +98,46 @@ Il monitor avvierà automaticamente TensorBoard e mostrerà l'URL per accedere a
 
 ## 📜 Script Principali
 
-### 1. train_italian_improved.py
+### 1. train_qlora_optimized.py
 
-Script principale per il fine-tuning del modello.
+Script principale **OTTIMIZZATO** per il fine-tuning del modello, basato su best practices HuggingFace TRL/SFTTrainer.
+
+#### Caratteristiche Principali
+
+- ✅ **SFTTrainer**: Ottimizzato per supervised fine-tuning
+- ✅ **Configurazione Centralizzata**: Parametri in `config.py`
+- ✅ **LoRA Best Practices**: r=16, alpha=32, dropout=0.05
+- ✅ **Full Attention**: Target modules q/k/v/o_proj
+- ✅ **Efficienza Hardware**: Ottimizzato per 2GB VRAM
 
 #### Utilizzo
 
 ```bash
-# Resume da ultimo checkpoint (default)
-python3 train_italian_improved.py
+# Training completo (55k campioni) - DEFAULT
+python3 train_qlora_optimized.py
 
-# Nuovo training da zero
-python3 train_italian_improved.py --no_resume
+# Test rapido (100 campioni)
+python3 train_qlora_optimized.py --quick
 
-# Resume da checkpoint specifico
-python3 train_italian_improved.py --resume_from checkpoint-600
+# Test intermedio (1000 campioni)
+python3 train_qlora_optimized.py --intermediate
 
-# Specifica numero di epoch
-python3 train_italian_improved.py --epochs 2
+# Specifica numero di campioni
+python3 train_qlora_optimized.py --max_samples 10000
 
-# Esegui in foreground (per debug)
-python3 train_italian_improved.py --no_background
-
-# Termina training in corso
-python3 train_italian_improved.py --kill
-
-# Forza riavvio (termina training esistente)
-python3 train_italian_improved.py --force
+# Resume da ultimo checkpoint
+python3 train_qlora_optimized.py --resume
 ```
 
 #### Opzioni
 
 | Flag | Descrizione |
 |------|-------------|
-| `--resume_from PATH` | Resume da checkpoint specifico |
-| `--no_resume` | Non riprendere da checkpoint esistenti |
-| `--no_background` | Esegui in foreground |
-| `--kill` | Termina tutti i training |
-| `--force` | Forza riavvio |
-| `--epochs N` | Numero di epoch |
+| `--quick` | Test rapido (100 campioni, 1 epoch) |
+| `--intermediate` | Test intermedio (1000 campioni) |
+| `--max_samples N` | Numero di campioni da usare |
+| `--resume` | Resume da ultimo checkpoint |
+| `--help` | Mostra help |
 
 ### 2. monitor_training.py
 
@@ -163,7 +164,7 @@ python3 monitor_training.py
 - Log recenti
 - Aggiornamento automatico ogni 3 secondi
 
-### 3. prepare_datasets.py
+### 2. prepare_datasets.py
 
 Script per scaricare e preparare i dataset in locale.
 
@@ -182,64 +183,91 @@ python3 prepare_datasets.py
 - **Alpaca-GPT4-Italian**: 15.000 istruzioni
 - **Dolly-15k**: 10.000 esempi (inglese - inclusi per diversità)
 
+### 3. monitor_training.py
+
+Script per il monitoraggio in tempo reale del training con **TensorBoard integrato**.
+
+#### Utilizzo
+
+```bash
+# Avvia monitoraggio (TensorBoard si avvia automaticamente)
+python3 monitor_training.py
+```
+
+#### Funzionalità
+
+- Mostra progresso training (step, epoch)
+- Visualizza metriche (loss, eval_loss, learning_rate)
+- Monitor risorse (GPU VRAM, utilization, temperature)
+- Trend chart ASCII per loss
+- **TensorBoard integrato con avvio/arresto automatico**
+- **URL con IP Tailscale per accesso remoto**
+- Supporto per training resumed da checkpoint
+- Indicazione dell'origine dei dati (src: live / src: checkpoint)
+- Messaggio di stato resume
+- Log recenti
+- Aggiornamento automatico ogni 3 secondi
+
 Il training usa automaticamente il dataset locale se presente.
 
 ## ⚙️ Configurazione
 
 ### Parametri Training
 
-I parametri possono essere modificati in `train_italian_improved.py`:
+I parametri sono centralizzati in `config.py` e possono essere modificati:
 
 ```python
-# Modello e Dataset
-MODEL_PATH = "./models/SmolLM-135M-Instruct"
-OUTPUT_DIR = "./smollm_italian_improved"
-LOG_DIR = "./logs_smollm_improved"
+@dataclass
+class TrainingConfig:
+    # Paths
+    base_model: str = "./models/SmolLM-135M-Instruct"
+    dataset_path: str = "./datasets/italian_unified/train.jsonl"
+    output_dir: str = "./output_qlora_optimized"
+    tensorboard_log_dir: str = "./logs_qlora_optimized"
+    
+    # Dataset
+    max_samples: Optional[int] = 55000
+    max_seq_length: int = 384
+    
+    # Training
+    batch_size: int = 1
+    gradient_accumulation_steps: int = 16
+    num_epochs: int = 3
+    learning_rate: float = 3e-4
+    weight_decay: float = 0.01
+    warmup_ratio: float = 0.1
+    
+    # LoRA Config (Best Practices)
+    lora_r: int = 16
+    lora_alpha: int = 32
+    lora_dropout: float = 0.05
+    target_modules: list = ["q_proj", "k_proj", "v_proj", "o_proj"]
+    
+    # Monitoring
+    logging_steps: int = 10
+    save_steps: int = 500
+    tensorboard_port: int = 6006
+```
 
-# Configurazione Dataset
-MAX_SAMPLES_TINYSTORIES = 30000  # Storie
-MAX_SAMPLES_ALPACA = 15000       # Istruzioni
-MAX_SAMPLES_DOLLY = 10000        # Dolly
+### Configurazione per Modelli Piccoli
 
-# Configurazione Batch
-BATCH_SIZE = 1
-GRADIENT_ACCUMULATION_STEPS = 32  # Effective batch = 32
-MAX_SEQ_LENGTH = 256
-
-# Configurazione Training
-LEARNING_RATE = 3e-5
-NUM_EPOCHS = 3
-WARMUP_RATIO = 0.1
-WEIGHT_DECAY = 0.01
-
-# Configurazione LoRA
-LORA_R = 32
-LORA_ALPHA = 64
-LORA_DROPOUT = 0.1
-# Target modules - include gate_proj per maggiore capacità
-TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj"]
-
-# Dataset locale unificato (creato da prepare_datasets.py)
-LOCAL_DATASET_PATH = "./datasets/italian_unified/train.jsonl"
-
-# Configurazione Logging
-LOGGING_STEPS = 10
-EVAL_STEPS = 200
-SAVE_STEPS = 200
-SAVE_TOTAL_LIMIT = 3
+Per ottimizzare per hardware limitato (MX250 2GB VRAM):
+```python
+config = TrainingConfig.full_training()
+# or for quick test:
+config = TrainingConfig.quick_test()
 ```
 
 ### Hardware Limitations
 
 Il training è ottimizzato per:
 - **GPU**: NVIDIA MX250 2GB VRAM
-- **RAM**: 14GB+
-- **Tempo**: ~41 secondi/step
+- **RAM**: 16GB+
+- **Tempo**: ~45 secondi/step (3-4 ore per training completo)
 
 Se hai più RAM o VRAM, puoi aumentare:
-- `BATCH_SIZE` (se VRAM > 2GB)
-- `MAX_SEQ_LENGTH` (se VRAM > 4GB)
-- `MAX_SAMPLES_*` (se RAM > 16GB)
+- `batch_size` (se VRAM > 4GB)
+- `max_seq_length` (se VRAM > 6GB)
 
 ## 📊 Monitoraggio
 
@@ -312,14 +340,14 @@ tensorboard --logdir ./logs_smollm_improved --port 6006 --bind_all
 
 ### File di Log
 
-- **Training Log**: `./smollm_italian_improved/training.log`
-- **TensorBoard Logs**: `./logs_smollm_improved/`
-- **Checkpoints**: `./smollm_italian_improved/checkpoint-*`
+- **Training Log**: `./train_qlora_optimized.log`
+- **TensorBoard Logs**: `./logs_qlora_optimized/`
+- **Checkpoints**: `./output_qlora_optimized/checkpoint-*`
 
 ### Verifica Training in corso
 
 ```bash
-ps aux | grep train_italian_improved
+ps aux | grep train_qlora_optimized
 ```
 
 ## 🔧 Troubleshooting
@@ -420,19 +448,20 @@ tail -f ./smollm_italian_improved/training.log
 
 ```
 training_llm/
-├── train_italian_improved.py    # Script training principale
+├── train_qlora_optimized.py    # Script training principale (OTTIMIZZATO)
 ├── monitor_training.py          # Script monitoraggio (con TensorBoard integrato)
 ├── prepare_datasets.py         # Script preparazione dataset
+├── config.py                   # Configurazione centralizzata
+├── requirements.txt            # Dipendenze progetto
 ├── models/                     # Modello base
 │   └── SmolLM-135M-Instruct/
 ├── datasets/                   # Dataset locali
 │   ├── italian_unified/       # Dataset unificato (55k campioni)
 │   └── databricks-dolly-15k/ # Dolly locale
-├── smollm_italian_improved/   # Output training
-│   ├── training.log           # Log training
-│   ├── .training_pid          # PID file
+├── output_qlora_optimized/    # Output training
+│   ├── train_qlora_optimized.log # Log training
 │   └── checkpoint-*/         # Checkpoints
-├── logs_smollm_improved/      # TensorBoard logs
+├── logs_qlora_optimized/      # TensorBoard logs
 ├── README.md                   # Documentazione
 └── AGENTS.md                   # Guide per agenti
 ```
@@ -468,6 +497,19 @@ Per problemi o domande:
 ---
 
 ## 📝 Changelog
+
+### 2026-03-21 - Migrazione a Pipeline Ottimizzata
+- **Feat**: Nuovo script `train_qlora_optimized.py` basato su TRL/SFTTrainer
+- **Feat**: Configurazione centralizzata in `config.py` con dataclass
+- **Feat**: Target modules completi per LoRA (q/k/v/o_proj)
+- **Feat**: Learning rate ottimizzato per 135M parametri (3e-4)
+- **Feat**: Max sequence length aumentato a 384 token
+- **Refactor**: Eliminato script legacy `train_italian_improved.py` (834 righe)
+- **Fix**: Syntax error in `config.py`
+- **Fix**: Metodo `from_dict()` in `config.py`
+- **Fix**: Tipizzazione di `target_modules`
+- **Improvement**: `requirements.txt` centralizzato con tutte le dipendenze
+- **Improvement**: `monitor_training.py` con supporto solo per nuovo script
 
 ### 2026-03-20 - Clean Training Mode
 - **Feat**: Pulizia automatica vecchi checkpoint e runs TensorBoard con `--no_resume`

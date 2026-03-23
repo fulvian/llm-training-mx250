@@ -511,6 +511,14 @@ def draw_loss_chart(
 
 
 def find_training_info() -> dict[str, Any]:
+    """Trova le informazioni sul training in corso.
+
+    Strategia:
+    1. Cerca un file .training_pid nelle directory di output
+    2. Cerca processi Python in esecuzione con nomi di training
+    3. Verifica che i log siano recenti (< 5 minuti)
+    4. Restituisce la directory di output CORRETTA, non pattern glob
+    """
     info = {
         "running": False,
         "pid": None,
@@ -522,33 +530,107 @@ def find_training_info() -> dict[str, Any]:
         "training_start_time": None,
     }
 
-    # Directory di output possibili (in ordine di priorità)
-    possible_dirs = [
-        "./output_qlora_optimized",  # QLoRA ottimizzato (UNICO SCRIPT ATTIVO)
+    # Pattern per identificare i processi di training
+    training_processes = [
+        "train_qwen25_medical_italian",
+        "train_qwen25_medical",
+        "train_qwen25_qlora",
+        "train_italian",
+        "train_best",
+        "train_qlora_optimized",
+        "train_qlora_v2",
+    ]
+
+    # Directory di output possibili (pattern glob)
+    output_patterns = [
+        "./output_qwen25_medical_italian_*",
+        "./output_qwen25_medical_*",
+        "./output_qwen25_qlora_*",
+        "./output_qwen_qlora_*",
+        "./output_qlora_v2",
+        "./output_qlora_optimized",
     ]
 
     # Log files possibili nella directory principale
-    possible_log_files = [
-        "train_qlora_optimized.log",  # QLoRA ottimizzato (UNICO SCRIPT ATTIVO)
+    log_patterns = [
+        "train_medical_italian.log",
+        "train_medical_live.log",
+        "train_medical_output.log",
+        "train_output.log",
+        "training_qwen25_*.log",
+        "training_qwen*.log",
+        "train_qlora_v2.log",
+        "train_qlora_optimized.log",
     ]
 
-    # Directory TensorBoard possibili
-    possible_tensorboard_dirs = [
-        "./logs_qlora_optimized",  # QLoRA ottimizzato (UNICO SCRIPT ATTIVO)
-    ]
+    def expand_patterns(patterns: list) -> list:
+        """Espande i pattern glob in directory reali."""
+        import glob as glob_module
 
-    found_valid_process = False
+        expanded = set()
+        for pattern in patterns:
+            if "*" in pattern or "?" in pattern:
+                matches = glob_module.glob(pattern)
+                expanded.update(matches)
+            elif os.path.exists(pattern):
+                expanded.add(pattern)
+        return list(expanded)
 
-    for dirname in possible_dirs:
+    def get_training_log_dir(output_dir: str) -> Optional[str]:
+        """Trova la directory dei log TensorBoard per una data output_dir."""
+        # Cerca direttamente nella output_dir
+        logs_dir = os.path.join(output_dir, "logs")
+        if os.path.exists(logs_dir):
+            return logs_dir
+
+        # Cerca nella parent directory con pattern
+        parent = os.path.dirname(output_dir)
+        if parent and parent != ".":
+            for pattern in [
+                f"{parent}/output_qwen25_medical_italian_*/logs",
+                f"{parent}/output_qwen25_medical_*/logs",
+                f"{parent}/output_qwen25_qlora_*/logs",
+            ]:
+                matches = expand_patterns([pattern])
+                if matches:
+                    # Prendi il più recente
+                    return max(matches, key=os.path.getmtime)
+
+        # Fallback a ./logs_* pattern
+        logs_patterns = [
+            "./logs_qwen25_medical_italian",
+            "./logs_qwen25_medical",
+            "./logs_qlora_v2",
+            "./logs_qlora_optimized",
+        ]
+        for logs_dir in logs_patterns:
+            if os.path.exists(logs_dir):
+                return logs_dir
+
+        return None
+
+    # ========================================
+    # FASE 1: Cerca .training_pid file
+    # ========================================
+    expanded_dirs = expand_patterns(output_patterns)
+
+    for dirname in expanded_dirs:
         pid_file = os.path.join(dirname, ".training_pid")
         if os.path.exists(pid_file):
             try:
                 with open(pid_file) as f:
                     pid = int(f.read().strip())
                 if os.path.exists(f"/proc/{pid}"):
+                    # Cerca il log file corretto
                     log_file = os.path.join(dirname, "training.log")
-                    if os.path.exists(log_file):
-                        mtime = os.path.getmtime(log_file)
+                    main_log = os.path.join(
+                        os.path.dirname(dirname), "train_medical_italian.log"
+                    )
+
+                    actual_log = log_file if os.path.exists(log_file) else main_log
+
+                    if os.path.exists(actual_log):
+                        mtime = os.path.getmtime(actual_log)
                         pid_mtime = os.path.getmtime(pid_file)
                         time_since_update = time.time() - mtime
                         info["last_update"] = mtime
@@ -559,105 +641,155 @@ def find_training_info() -> dict[str, Any]:
                             info["status"] = "running"
                             info["pid"] = pid
                             info["output_dir"] = dirname
-                            info["log_file"] = log_file
-                            info["log_dir"] = possible_tensorboard_dirs[0]
-                            found_valid_process = True
+                            info["log_file"] = actual_log
+                            info["log_dir"] = get_training_log_dir(dirname)
+                            return info
                         else:
                             info["running"] = False
                             info["status"] = "crashed"
                             info["pid"] = pid
                             info["output_dir"] = dirname
-                            info["log_file"] = log_file
-                            info["log_dir"] = possible_tensorboard_dirs[0]
+                            info["log_file"] = actual_log
+                            info["log_dir"] = get_training_log_dir(dirname)
                             return info
             except (ValueError, FileNotFoundError, ProcessLookupError):
-                info["running"] = False
-                info["status"] = "crashed"
-                info["output_dir"] = dirname
-                info["log_file"] = os.path.join(dirname, "training.log")
-                info["log_dir"] = possible_tensorboard_dirs[0]
-                return info
+                pass
 
-    if found_valid_process:
-        return info
-
+    # ========================================
+    # FASE 2: Cerca processi in esecuzione
+    # ========================================
     try:
         result = subprocess.run(
             ["ps", "aux"],
             capture_output=True,
             text=True,
         )
+
+        active_pids = []
         for line in result.stdout.split("\n"):
-            if (
-                "train_italian" in line
-                or "train_best" in line
-                or "train_qlora_optimized" in line
-            ):
-                if "python" in line and "grep" not in line:
+            for proc_name in training_processes:
+                if proc_name in line and "python" in line and "grep" not in line:
                     parts = line.split()
                     if len(parts) > 1:
-                        pid = int(parts[1])
+                        try:
+                            pid = int(parts[1])
+                            active_pids.append((pid, proc_name))
+                        except ValueError:
+                            pass
+                    break
 
-                        # Prima cerca i log files nella directory principale
-                        for log_filename in possible_log_files:
-                            if os.path.exists(log_filename):
-                                mtime = os.path.getmtime(log_filename)
-                                time_since_update = time.time() - mtime
-                                info["last_update"] = mtime
+        # Per ogni PID trovato, cerca la directory di output corretta
+        for pid, proc_name in active_pids:
+            # Metodo 1: Cerca nella directory di lavoro del processo
+            try:
+                cwd_link = f"/proc/{pid}/cwd"
+                if os.path.exists(cwd_link):
+                    proc_cwd = os.readlink(cwd_link)
+                    # Il training potrebbe essere avviato dalla directory di output
+                    for pattern in output_patterns:
+                        matches = expand_patterns([pattern])
+                        for match in matches:
+                            if match in proc_cwd or proc_cwd in match:
+                                # Verifica che ci sia un log file
+                                log_file = os.path.join(match, "training.log")
+                                main_log = "train_medical_italian.log"
 
-                                info["running"] = True
-                                info["status"] = "running"
-                                info["pid"] = pid
-                                info["output_dir"] = possible_dirs[
-                                    0
-                                ]  # Usa il primo come default
-                                info["log_file"] = log_filename
-                                info["log_dir"] = possible_tensorboard_dirs[0]
-                                return info
+                                actual_log = (
+                                    log_file if os.path.exists(log_file) else main_log
+                                )
+                                if os.path.exists(actual_log):
+                                    mtime = os.path.getmtime(actual_log)
+                                    time_since_update = time.time() - mtime
 
-                        # Fallback: cerca nelle directory di output
-                        for dirname in possible_dirs:
-                            log_file = os.path.join(dirname, "training.log")
-                            if os.path.exists(log_file):
-                                mtime = os.path.getmtime(log_file)
-                                time_since_update = time.time() - mtime
-                                info["last_update"] = mtime
+                                    info["running"] = True
+                                    info["status"] = (
+                                        "running"
+                                        if time_since_update < 300
+                                        else "crashed"
+                                    )
+                                    info["pid"] = pid
+                                    info["output_dir"] = match
+                                    info["log_file"] = actual_log
+                                    info["log_dir"] = get_training_log_dir(match)
+                                    info["last_update"] = mtime
+                                    return info
+            except (FileNotFoundError, ProcessLookupError, PermissionError):
+                pass
 
-                                info["running"] = True
-                                info["status"] = "running"
-                                info["pid"] = pid
-                                info["output_dir"] = dirname
-                                info["log_file"] = log_file
-                                info["log_dir"] = possible_tensorboard_dirs[0]
-                                return info
+            # Metodo 2: Cerca le directory di output più recenti e verifica con i log
+            for dirname in sorted(expanded_dirs, key=os.path.getmtime, reverse=True):
+                log_file = os.path.join(dirname, "training.log")
+                main_log = os.path.join(
+                    os.path.dirname(dirname), "train_medical_italian.log"
+                )
+
+                # Usa il log file più recente
+                candidates = []
+                if os.path.exists(log_file):
+                    candidates.append((log_file, os.path.getmtime(log_file)))
+                if os.path.exists(main_log):
+                    candidates.append((main_log, os.path.getmtime(main_log)))
+
+                if candidates:
+                    actual_log, log_mtime = max(candidates, key=lambda x: x[1])
+                    time_since_update = time.time() - log_mtime
+
+                    # Se il log è stato aggiornato di recente (< 10 minuti)
+                    if time_since_update < 600:
+                        info["running"] = True
+                        info["status"] = (
+                            "running" if time_since_update < 300 else "crashed"
+                        )
+                        info["pid"] = pid
+                        info["output_dir"] = dirname
+                        info["log_file"] = actual_log
+                        info["log_dir"] = get_training_log_dir(dirname)
+                        info["last_update"] = log_mtime
+                        return info
     except Exception:
         pass
 
-    for dirname in possible_dirs:
+    # ========================================
+    # FASE 3: Cerca training completato o idle
+    # ========================================
+
+    # Cerca completamento (pytorch_model.bin)
+    for dirname in expanded_dirs:
         final_model = os.path.join(dirname, "pytorch_model.bin")
         if os.path.exists(final_model):
             info["status"] = "completed"
             info["output_dir"] = dirname
-            info["log_file"] = os.path.join(dirname, "training.log")
-            info["log_dir"] = "./smollm_italian_improved/runs"
+            log_file = os.path.join(dirname, "training.log")
+            main_log = os.path.join(
+                os.path.dirname(dirname), "train_medical_italian.log"
+            )
+            info["log_file"] = log_file if os.path.exists(log_file) else main_log
+            info["log_dir"] = get_training_log_dir(dirname)
             return info
 
+    # Cerca la directory più recente con log file
     most_recent_dir = None
-    most_recent_time = 0
-    for dirname in possible_dirs:
+    most_recent_log_mtime = 0
+    most_recent_log_file = None
+
+    for dirname in expanded_dirs:
         log_file = os.path.join(dirname, "training.log")
-        if os.path.exists(log_file):
-            mtime = os.path.getmtime(log_file)
-            if mtime > most_recent_time:
-                most_recent_time = mtime
-                most_recent_dir = dirname
-                info["last_update"] = mtime
+        main_log = os.path.join(os.path.dirname(dirname), "train_medical_italian.log")
+
+        for log in [log_file, main_log]:
+            if os.path.exists(log):
+                mtime = os.path.getmtime(log)
+                if mtime > most_recent_log_mtime:
+                    most_recent_log_mtime = mtime
+                    most_recent_dir = dirname
+                    most_recent_log_file = log
 
     if most_recent_dir:
         info["output_dir"] = most_recent_dir
-        info["log_file"] = os.path.join(most_recent_dir, "training.log")
-        info["log_dir"] = "./smollm_italian_improved/runs"
-        if time.time() - most_recent_time > 3600:
+        info["log_file"] = most_recent_log_file
+        info["log_dir"] = get_training_log_dir(most_recent_dir)
+        info["last_update"] = most_recent_log_mtime
+        if time.time() - most_recent_log_mtime > 3600:
             info["status"] = "completed"
         else:
             info["status"] = "idle"
@@ -679,7 +811,7 @@ def parse_trainer_state(
         "learning_rate": None,
         "epoch": 0.0,
         "grad_norm": None,
-        "total_steps": 5139,
+        "total_steps": 0,  # Will be updated from trainer_state.json
         "current_step": 0,
         "starting_step": 0,
         "checkpoint_path": None,
@@ -752,7 +884,7 @@ def parse_log_metrics(log_content: str) -> dict[str, Any]:
         "learning_rate": None,
         "epoch": 0.0,
         "grad_norm": None,
-        "total_steps": 5139,
+        "total_steps": 0,  # Will be updated from log parsing
         "current_step": 0,
     }
 
@@ -1024,8 +1156,25 @@ def main():
     refresh_interval = 3
     start_time = time.time()
 
-    # Inizializza TensorBoard manager
-    tb_manager = TensorBoardManager("./logs_qlora_optimized", TENSORBOARD_PORT)
+    # Inizializza TensorBoard manager (cerca i log più recenti)
+    import glob
+
+    possible_tb_dirs = (
+        glob.glob("./output_qwen25_medical_italian_*/logs")
+        + glob.glob("./output_qwen25_medical_*/logs")
+        + glob.glob("./output_qwen25_qlora_*/logs")
+    )
+    if possible_tb_dirs:
+        tb_log_dir = max(possible_tb_dirs, key=os.path.getmtime)
+    elif os.path.exists("./output_qwen_qlora_20260322_100639/logs"):
+        tb_log_dir = "./output_qwen_qlora_20260322_100639/logs"
+    elif os.path.exists("./output_qwen_qlora_20260322_100557/logs"):
+        tb_log_dir = "./output_qwen_qlora_20260322_100557/logs"
+    elif os.path.exists("./logs_qlora_v2"):
+        tb_log_dir = "./logs_qlora_v2"
+    else:
+        tb_log_dir = "./logs_qlora_optimized"
+    tb_manager = TensorBoardManager(tb_log_dir, TENSORBOARD_PORT)
     _tensorboard_manager = tb_manager
 
     while True:
@@ -1116,7 +1265,7 @@ def main():
             "learning_rate": None,
             "epoch": 0.0,
             "grad_norm": None,
-            "total_steps": 5139,
+            "total_steps": 0,  # Will be updated from trainer_state.json or log
             "current_step": 0,
             "starting_step": 0,
             "checkpoint_path": None,
